@@ -141,7 +141,7 @@ st.markdown("""
 <div class="brandwrap">
   <div class="logo">
     <div class="logotype">Orchestrix</div>
-    <div class="tag">Trust-routed multi-agent memory for better answers</div>
+    <div class="tag">Think Better. Orchestrate Smarter</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
