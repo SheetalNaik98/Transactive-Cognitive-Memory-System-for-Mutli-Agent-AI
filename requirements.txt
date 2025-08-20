@@ -1,0 +1,5 @@
+openai==1.51.0
+numpy==1.24.4
+tenacity==8.2.3
+python-dotenv==1.0.1
+streamlit==1.38.0
