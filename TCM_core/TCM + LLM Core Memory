@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-TCM + LLM Core Memory
-- Minimal deps (OpenAI, NumPy, Tenacity, Dotenv)
-- CPU-only embeddings using OpenAI (text-embedding-3-small)
-- Retrieval via NumPy cosine similarity
-- Thompson sampling over Beta(alpha, beta) for trust & delegation
+TCM + LLM Core Memory (Lite)
+- OpenAI embeddings (CPU)
+- NumPy cosine retrieval
+- Beta (alpha,beta) trust + Thompson sampling
 """
 
 import os, time, hashlib, json
@@ -13,15 +12,11 @@ from typing import Dict, List, Optional
 from collections import defaultdict, deque
 import numpy as np
 from tenacity import retry, stop_after_attempt, wait_exponential
-from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
-
-
-# -----------------------------
-# Data structures
-# -----------------------------
+# ---------------------------
+# Data model
+# ---------------------------
 @dataclass
 class MemoryEntry:
     id: str
@@ -34,16 +29,15 @@ class MemoryEntry:
     memory_type: str = "episodic"  # episodic | semantic | procedural
     metadata: Dict = field(default_factory=dict)
 
-
-# -----------------------------
-# Core Memory (Lite)
-# -----------------------------
+# ---------------------------
+# Core memory (lite)
+# ---------------------------
 class LLMCoreMemoryLite:
     def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
         self.client = client
         self.embed_model = embed_model
 
-        self.working_memory = deque(maxlen=10)
+        self.working = deque(maxlen=10)
         self.episodic: List[MemoryEntry] = []
         self.semantic: Dict[str, List[MemoryEntry]] = {}
         self.procedural: Dict[str, MemoryEntry] = {}
@@ -71,28 +65,24 @@ class LLMCoreMemoryLite:
             memory_type=memory_type
         )
         if memory_type == "episodic":
-            self.episodic.append(entry)
-            self.working_memory.append(mem_id)
+            self.episodic.append(entry); self.working.append(mem_id)
         elif memory_type == "semantic":
             self.semantic.setdefault(topic, []).append(entry)
-        else:  # procedural
+        else:
             self.procedural[topic] = entry
         return mem_id
 
     def _all_entries(self) -> List[MemoryEntry]:
         out = list(self.episodic)
-        for arr in self.semantic.values():
-            out.extend(arr)
+        for arr in self.semantic.values(): out.extend(arr)
         out.extend(self.procedural.values())
         return out
 
     def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
         entries = self._all_entries()
-        if not entries:
-            return []
+        if not entries: return []
         q = self._embed(query)
-        mats = np.stack([e.embedding for e in entries], axis=0)  # [N, D]
-        # cosine similarity
+        mats = np.stack([e.embedding for e in entries], axis=0)  # [N,D]
         denom = (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
         sims = mats.dot(q) / denom
         idxs = np.argsort(-sims)[:k]
@@ -104,19 +94,15 @@ class LLMCoreMemoryLite:
         return results
 
     def consolidate(self) -> int:
-        moved = 0
-        keep: List[MemoryEntry] = []
+        moved = 0; keep: List[MemoryEntry] = []
         for e in self.episodic:
             if e.access_count >= self.consolidation_threshold:
                 self.semantic.setdefault(e.topic, []).append(
                     MemoryEntry(
                         id=f"cons_{e.id}",
                         content=f"[Consolidated] {e.content}",
-                        embedding=e.embedding,
-                        topic=e.topic,
-                        agent_id=e.agent_id,
-                        timestamp=time.time(),
-                        memory_type="semantic",
+                        embedding=e.embedding, topic=e.topic, agent_id=e.agent_id,
+                        timestamp=time.time(), memory_type="semantic",
                         metadata={"orig": e.id, "access_count": e.access_count},
                     )
                 )
@@ -126,53 +112,42 @@ class LLMCoreMemoryLite:
         self.episodic = keep
         return moved
 
-    # --- (optional) export/import for persistence ---
+    # ----- persistence for Streamlit state -----
     def export_entries(self) -> List[Dict]:
-        def _ser(e: MemoryEntry):
-            d = asdict(e)
-            d["embedding"] = e.embedding.tolist()
-            return d
-        all_items = []
-        all_items += [("episodic", e) for e in self.episodic]
-        for t, arr in self.semantic.items():
-            for e in arr: all_items.append(("semantic", e))
-        for t, e in self.procedural.items():
-            all_items.append(("procedural", e))
-        return [{"which": w, "entry": _ser(e)} for (w, e) in all_items]
+        def pack(e: MemoryEntry) -> Dict:
+            d = asdict(e); d["embedding"] = e.embedding.tolist(); return d
+        out = [pack(e) for e in self.episodic]
+        for arr in self.semantic.values(): out += [pack(e) for e in arr]
+        out += [pack(e) for e in self.procedural.values()]
+        return out
 
-    def import_entries(self, items: List[Dict]):
-        if not items: return
-        for it in items:
-            w = it.get("which")
-            d = it.get("entry", {})
+    def import_entries(self, dumped: List[Dict]):
+        self.episodic.clear(); self.semantic.clear(); self.procedural.clear()
+        for d in dumped:
             e = MemoryEntry(
                 id=d["id"], content=d["content"],
                 embedding=np.array(d["embedding"], dtype=np.float32),
                 topic=d["topic"], agent_id=d["agent_id"],
-                timestamp=float(d["timestamp"]),
-                access_count=int(d.get("access_count", 0)),
-                memory_type=d.get("memory_type", "episodic"),
-                metadata=d.get("metadata", {}),
+                timestamp=d["timestamp"], access_count=d.get("access_count",0),
+                memory_type=d.get("memory_type","episodic"),
+                metadata=d.get("metadata",{}),
             )
-            if w == "episodic":
+            if e.memory_type == "episodic":
                 self.episodic.append(e)
-            elif w == "semantic":
+            elif e.memory_type == "semantic":
                 self.semantic.setdefault(e.topic, []).append(e)
-            elif w == "procedural":
+            else:
                 self.procedural[e.topic] = e
 
-
-# -----------------------------
-# TCM + Memory (Lite)
-# -----------------------------
+# ---------------------------
+# TCM + Memory (lite)
+# ---------------------------
 class TCMWithLLMMemoryLite:
     def __init__(self, agents: List[str], topics: List[str],
-                 chat_model: str = "gpt-4o-mini",
-                 embed_model: str = "text-embedding-3-small"):
+                 chat_model: str = "gpt-4o-mini"):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY not set in environment or secrets")
-
+            raise RuntimeError("OPENAI_API_KEY is not set")
         self.client = OpenAI(api_key=api_key)
         self.chat_model = chat_model
 
@@ -180,25 +155,20 @@ class TCMWithLLMMemoryLite:
         self.topics = topics
         self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
 
-        self.mem_local = {a: LLMCoreMemoryLite(self.client, embed_model) for a in agents}
-        self.mem_shared = LLMCoreMemoryLite(self.client, embed_model)
+        self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
+        self.mem_shared = LLMCoreMemoryLite(self.client)
 
-        self.metrics = {
-            "delegations": 0,
-            "total": 0,
-            "mems_used": [],
-            "hit_rate": [],
-            "consolidations": 0,
-        }
+        self.metrics = {"delegations": 0, "total": 0, "mems_used": [], "hit_rate": [], "consolidations": 0}
 
+    # ----- helpers -----
     def _topic(self, text: str) -> str:
         t = text.lower()
         rules = {
             "planning": ["plan", "roadmap", "strategy", "schedule"],
             "research": ["research", "investigate", "study", "analyze"],
-            "coding":   ["code", "implement", "bug", "debug", "write python"],
+            "coding":   ["code", "implement", "bug", "debug", "python"],
             "ml":       ["ml", "model", "train", "neural", "classifier"],
-            "nlp":      ["nlp", "transformer", "llm", "token", "text", "attention"],
+            "nlp":      ["nlp", "transformer", "llm", "token", "text"],
         }
         for topic, kws in rules.items():
             if any(kw in t for kw in kws):
@@ -206,7 +176,6 @@ class TCMWithLLMMemoryLite:
         return self.topics[0] if self.topics else "general"
 
     def _expert(self, topic: str) -> str:
-        # Thompson sampling over Beta(alpha, beta)
         scores = {}
         for a in self.agents:
             p = self.trust[f"{a}:{topic}"]
@@ -214,8 +183,7 @@ class TCMWithLLMMemoryLite:
         return max(scores, key=scores.get)
 
     def _format_mem(self, mems: List[MemoryEntry]) -> str:
-        if not mems:
-            return "No relevant memories."
+        if not mems: return "No relevant memories."
         lines = []
         for i, m in enumerate(mems[:5], 1):
             lines.append(f"{i}. ({m.memory_type}) {m.content[:220]}...")
@@ -225,8 +193,8 @@ class TCMWithLLMMemoryLite:
         try:
             r = self.client.chat.completions.create(
                 model=self.chat_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7, max_tokens=450,
+                messages=[{"role":"user","content":prompt}],
+                temperature=0.7, max_tokens=450
             )
             return r.choices[0].message.content
         except Exception as e:
@@ -240,25 +208,22 @@ class TCMWithLLMMemoryLite:
 
     def _update_trust(self, agent: str, topic: str, success: bool):
         k = f"{agent}:{topic}"
-        if success:
-            self.trust[k]["alpha"] += 1
-        else:
-            self.trust[k]["beta"] += 1
+        if success: self.trust[k]["alpha"] += 1
+        else:       self.trust[k]["beta"]  += 1
 
     def trust_score(self, agent: str, topic: str) -> float:
         p = self.trust[f"{agent}:{topic}"]
         return p["alpha"] / (p["alpha"] + p["beta"])
 
+    # ----- main flow -----
     def process(self, query: str, requester: Optional[str] = None) -> Dict:
         self.metrics["total"] += 1
         topic = self._topic(query)
         requester = requester or np.random.choice(self.agents)
         expert = self._expert(topic)
         delegated = expert != requester
-        if delegated:
-            self.metrics["delegations"] += 1
+        if delegated: self.metrics["delegations"] += 1
 
-        # retrieve memories
         local = self.mem_local[expert].retrieve(query, k=3)
         shared = self.mem_shared.retrieve(query, k=2)
         used = local + shared
@@ -270,37 +235,29 @@ Relevant memories:
 User query:
 {query}
 
-Craft a helpful, accurate answer that uses the memories when relevant.
-"""
+Answer helpfully and accurately, using the memories when relevant."""
         answer = self._call_llm(prompt)
 
-        # store new episodic memory for expert
+        # store episodic memory
         self.mem_local[expert].add_memory(
-            content=f"Q: {query}\nA: {answer}",
-            topic=topic, agent_id=expert, memory_type="episodic"
+            content=f"Q: {query}\nA: {answer}", topic=topic, agent_id=expert, memory_type="episodic"
         )
-        # heuristic quality → trust update
+        # trust update (heuristic)
         q = self._quality(answer, used)
         self._update_trust(expert, topic, success=(q > 0.7))
 
-        cons_local = self.mem_local[expert].consolidate()
+        cons_local  = self.mem_local[expert].consolidate()
         cons_shared = self.mem_shared.consolidate()
         self.metrics["consolidations"] += (cons_local + cons_shared)
 
-        # track
         hit = (len(local) / max(1, len(used))) if used else 0.0
         self.metrics["mems_used"].append(len(used))
         self.metrics["hit_rate"].append(hit)
 
         return {
-            "query": query,
-            "response": answer,
-            "topic": topic,
-            "requester": requester,
-            "expert": expert,
-            "delegated": delegated,
-            "memories_used": len(used),
-            "trust_score": self.trust_score(expert, topic),
+            "query": query, "response": answer, "topic": topic,
+            "requester": requester, "expert": expert, "delegated": delegated,
+            "memories_used": len(used), "trust_score": self.trust_score(expert, topic),
         }
 
     def summary(self) -> Dict:
@@ -311,36 +268,21 @@ Craft a helpful, accurate answer that uses the memories when relevant.
             "avg_memories_used": float(np.mean(self.metrics["mems_used"])) if self.metrics["mems_used"] else 0.0,
             "avg_memory_hit_rate": float(np.mean(self.metrics["hit_rate"])) if self.metrics["hit_rate"] else 0.0,
             "total_consolidations": self.metrics["consolidations"],
-            "trust": {k: v["alpha"] / (v["alpha"] + v["beta"]) for k, v in self.trust.items()},
+            "trust": {k: v["alpha"]/(v["alpha"]+v["beta"]) for k,v in self.trust.items()},
         }
 
-    # --- simple seed & state helpers for UIs ---
-    def seed_shared(self):
-        seeds = [
-            ("Transformers use self-attention to weigh token-token interactions.", "nlp", "seed"),
-            ("Basic ML project plan: data → features → model → eval → iterate.", "planning", "seed"),
-            ("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "seed"),
-        ]
-        for text, topic, who in seeds:
-            self.mem_shared.add_memory(text, topic=topic, agent_id=who, memory_type="semantic")
-
+    # ----- export/import for Streamlit session_state -----
     def export_state(self) -> Dict:
         return {
             "trust": self.trust,
             "shared_mem": self.mem_shared.export_entries(),
-            "locals": {
-                a: self.mem_local[a].export_entries() for a in self.agents
-            }
+            "locals": {a: self.mem_local[a].export_entries() for a in self.agents},
+            "metrics": self.metrics,
         }
 
     def import_state(self, state: Dict):
-        if not state: return
-        # trust
-        self.trust = defaultdict(lambda: {"alpha":1.0,"beta":1.0},
-                                 {k:{"alpha":float(v["alpha"]),"beta":float(v["beta"])} for k,v in state.get("trust",{}).items()})
-        # memories
+        self.trust = defaultdict(lambda: {"alpha":1.0, "beta":1.0}, state.get("trust", {}))
+        self.metrics = state.get("metrics", self.metrics)
         self.mem_shared.import_entries(state.get("shared_mem", []))
-        locals_state = state.get("locals", {})
-        for a, items in locals_state.items():
-            if a in self.mem_local:
-                self.mem_local[a].import_entries(items)
+        for a in self.agents:
+            self.mem_local[a].import_entries(state.get("locals", {}).get(a, []))
