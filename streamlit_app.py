@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Premium dark UI for TCM + LLM Core Memory (no extra deps)
-import os, time, hashlib
+# Premium dark UI + routing animation (no extra deps)
+import os, time, hashlib, random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from collections import defaultdict, deque
@@ -16,7 +16,6 @@ st.set_page_config(page_title="TCM + LLM Core Memory", layout="wide")
 def inject_css():
     st.markdown("""
     <style>
-      /* --------- Fonts / Base --------- */
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..800&display=swap');
       html, body, [data-testid="stAppViewContainer"] * { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
       [data-testid="stAppViewContainer"]{
@@ -35,7 +34,6 @@ def inject_css():
         --muted:#9aa3ad; --text:#e7e9ee; --accent:#7fb4ff; --ok:#1fbf75; --bad:#e24c4b;
       }
 
-      /* --------- Glass cards / shells --------- */
       .shell{
         border: 1px solid var(--stroke);
         background: linear-gradient(180deg, var(--glass-strong), rgba(255,255,255,0.02));
@@ -44,106 +42,77 @@ def inject_css():
         box-shadow: 0 10px 35px rgba(0,0,0,.35);
       }
       .shell.soft{ background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)); }
+      .halo{ position: relative; border-radius: 16px; padding: 1px;
+        background: linear-gradient(135deg, rgba(127,180,255,.35), rgba(31,191,117,.35)); }
+      .halo > .inner{ border-radius: 15px; background: rgba(14,15,19,.9); padding: 16px; border: 1px solid var(--stroke); backdrop-filter: blur(8px); }
 
-      .halo{
-        position: relative;
-        border-radius: 16px;
-        padding: 1px;
-        background: linear-gradient(135deg, rgba(127,180,255,.35), rgba(31,191,117,.35));
-      }
-      .halo > .inner{
-        border-radius: 15px; background: rgba(14,15,19,.9); padding: 16px;
-        border: 1px solid var(--stroke);
-        backdrop-filter: blur(8px);
-      }
-
-      /* --------- Headline --------- */
-      .headline{
-        display:flex; align-items:end; gap:16px; margin-bottom:8px;
-      }
+      .headline{ display:flex; align-items:end; gap:16px; margin-bottom:8px; }
       .headline h1{ margin:0; font-size:28px; letter-spacing:.2px; color:var(--text); }
       .headline .sub{ color:var(--muted); margin-top:4px; }
 
-      /* --------- Disclaimer --------- */
       .disclaimer{
         border:1px solid var(--stroke); color:var(--muted);
         background: linear-gradient(180deg, rgba(127,180,255,.05), rgba(31,191,117,.05));
         padding:14px 16px; border-radius:12px;
       }
 
-      /* --------- Grid --------- */
-      .grid{
-        display:grid; gap:14px; grid-template-columns: repeat(4, minmax(0,1fr));
-      }
-      @media (max-width:1100px){ .grid{ grid-template-columns: repeat(2,1fr);} }
-      @media (max-width:680px){ .grid{ grid-template-columns: 1fr;} }
+      /* Metrics grid with real spacing */
+      .grid{ display:grid; gap: 22px; grid-template-columns: repeat(2, 1fr); margin-top: 6px; }
+      @media (min-width:1100px){ .grid{ grid-template-columns: repeat(3, 1fr); } }
+      @media (max-width:700px){ .grid{ grid-template-columns: 1fr; } }
 
-      /* --------- Metric chips --------- */
       .chip{
-        padding: 14px; border-radius:14px;
+        padding: 16px; border-radius:14px;
         background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
         border:1px solid var(--stroke);
-        box-shadow: 0 6px 20px rgba(0,0,0,.25);
+        box-shadow: 0 8px 24px rgba(0,0,0,.30);
         transform: translateY(6px); opacity:0; animation: rise .45s ease forwards;
       }
       .chip .label{ color:var(--muted); font-size:12px; letter-spacing:.4px; text-transform:uppercase; }
-      .chip .value{ font-size:26px; font-weight:700; padding-top:2px; }
-
+      .chip .value{ font-size:28px; font-weight:700; padding-top:2px; }
       @keyframes rise { to { transform: translateY(0); opacity:1; } }
 
-      /* --------- Status line --------- */
       .status{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-      .badge{
-        padding:7px 12px; border-radius:999px; font-weight:700; font-size:12px;
-        border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);
-      }
+      .badge{ padding:7px 12px; border-radius:999px; font-weight:700; font-size:12px;
+              border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text); }
       .badge-topic { color:#a0c7ff; border-color:rgba(127,180,255,.35); background: rgba(127,180,255,.08); }
       .badge-mem   { color:#ffd39c; border-color:rgba(255,196,127,.32); background: rgba(255,196,127,.08); }
-
-      .delegation{ color:#fff; border:1px solid var(--stroke); }
-      .delegation.ok{
-        background: linear-gradient(90deg, #0f7a46, #12a35b);
-        animation: pulseG 1.1s ease-in-out 3;
-      }
-      .delegation.bad{
-        background: linear-gradient(90deg, #a32725, #d8423f);
-        animation: pulseR 1.1s ease-in-out 3;
-      }
+      .delegation.ok{ color:#fff; border:1px solid var(--stroke);
+                      background: linear-gradient(90deg, #0f7a46, #12a35b); animation: pulseG 1.1s ease-in-out 3; }
+      .delegation.bad{ color:#fff; border:1px solid var(--stroke);
+                       background: linear-gradient(90deg, #a32725, #d8423f); animation: pulseR 1.1s ease-in-out 3; }
       @keyframes pulseG{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
       @keyframes pulseR{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
 
-      /* --------- Answer panel --------- */
       .answer{ background: rgba(255,255,255,.03); border:1px solid var(--stroke); border-radius:12px; padding:16px; color:var(--text); }
 
-      /* --------- Agent cards --------- */
-      .agent{
-        border:1px solid var(--stroke); border-radius:14px; padding:14px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-      }
+      .agent{ border:1px solid var(--stroke); border-radius:14px; padding:14px;
+              background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)); }
       .agent .name{ font-weight:700; }
-      .bar{
-        width:100%; height:8px; background:#13161b; border-radius:999px; border:1px solid var(--stroke); overflow:hidden;
-      }
-      .bar > span{
-        display:block; height:100%;
-        background: linear-gradient(90deg, #7fb4ff, #1fbf75);
-        width:0%;
-        animation: fill .7s ease forwards;
-      }
+      .bar{ width:100%; height:8px; background:#13161b; border-radius:999px; border:1px solid var(--stroke); overflow:hidden; }
+      .bar > span{ display:block; height:100%;
+                   background: linear-gradient(90deg, #ff6b6b, #ffd166 50%, #1fbf75);
+                   width:0%; animation: fill .7s ease forwards; }
       @keyframes fill{ from{ width:0%; } }
 
-      /* --------- Buttons --------- */
       .btnrow{ display:flex; gap:10px; }
       .hint{ color:var(--muted); font-size:13px; }
 
-      /* Hide default Streamlit block labels spacing */
-      .st-eb{ gap: 0 !important; }
+      /* Routing overlay */
+      .overlay{ position: fixed; inset: 0; z-index: 9999;
+                display:flex; align-items:center; justify-content:center;
+                background: rgba(5,7,10,.55); backdrop-filter: blur(4px); }
+      .routebox{ width:min(720px, 92vw); }
+      .row{ display:grid; grid-template-columns: 150px 1fr 70px; gap:12px; align-items:center; }
+      .routebar{ position:relative; height:10px; border-radius:999px; background:#0e1116; border:1px solid var(--stroke); overflow:hidden;}
+      .routebar > span{ display:block; height:100%; background: linear-gradient(90deg, #7fb4ff, #1fbf75); width:0%; animation: fill .8s ease forwards; }
+      .small{ color:var(--muted); font-size:12px; }
     </style>
     """, unsafe_allow_html=True)
 
 inject_css()
 
-# ---------- API key ----------
+# ---------------- API key ----------------
 def require_api_key():
     key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
     if key:
@@ -157,10 +126,9 @@ def require_api_key():
             st.success("Saved for this session.")
         else:
             st.stop()
-
 require_api_key()
 
-# ---------- Engine ----------
+# ---------------- Engine ----------------
 @dataclass
 class MemoryEntry:
     id: str
@@ -175,8 +143,7 @@ class MemoryEntry:
 
 class LLMCoreMemoryLite:
     def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
-        self.client = client
-        self.embed_model = embed_model
+        self.client = client; self.embed_model = embed_model
         self.working_memory = deque(maxlen=10)
         self.episodic: List[MemoryEntry] = []
         self.semantic: Dict[str, List[MemoryEntry]] = {}
@@ -187,30 +154,24 @@ class LLMCoreMemoryLite:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=5))
     def _embed(self, text: str) -> np.ndarray:
         h = hashlib.md5(text.encode()).hexdigest()
-        if h in self._embed_cache:
-            return self._embed_cache[h]
+        if h in self._embed_cache: return self._embed_cache[h]
         r = self.client.embeddings.create(model=self.embed_model, input=text)
         vec = np.array(r.data[0].embedding, dtype=np.float32)
-        self._embed_cache[h] = vec
-        return vec
+        self._embed_cache[h] = vec; return vec
 
     def add_memory(self, content: str, topic: str, agent_id: str, memory_type: str = "episodic") -> str:
         emb = self._embed(content)
         mem_id = hashlib.md5(f"{content}{time.time()}".encode()).hexdigest()[:10]
         e = MemoryEntry(mem_id, content, emb, topic, agent_id, time.time(), 0, memory_type)
-        if memory_type == "episodic":
-            self.episodic.append(e); self.working_memory.append(mem_id)
-        elif memory_type == "semantic":
-            self.semantic.setdefault(topic, []).append(e)
-        else:
-            self.procedural[topic] = e
+        if memory_type == "episodic": self.episodic.append(e); self.working_memory.append(mem_id)
+        elif memory_type == "semantic": self.semantic.setdefault(topic, []).append(e)
+        else: self.procedural[topic] = e
         return mem_id
 
     def _all(self) -> List[MemoryEntry]:
         out = list(self.episodic)
         for v in self.semantic.values(): out.extend(v)
-        out.extend(self.procedural.values())
-        return out
+        out.extend(self.procedural.values()); return out
 
     def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
         entries = self._all()
@@ -220,8 +181,7 @@ class LLMCoreMemoryLite:
         sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
         idx = np.argsort(-sims)[:k]
         out = []
-        for i in idx:
-            ent = entries[i]; ent.access_count += 1; out.append(ent)
+        for i in idx: entries[i].access_count += 1; out.append(entries[i])
         return out
 
     def consolidate(self) -> int:
@@ -229,22 +189,17 @@ class LLMCoreMemoryLite:
         for e in self.episodic:
             if e.access_count >= self.consolidation_threshold:
                 self.semantic.setdefault(e.topic, []).append(
-                    MemoryEntry(
-                        id=f"cons_{e.id}", content=f"[Consolidated] {e.content}",
-                        embedding=e.embedding, topic=e.topic, agent_id=e.agent_id,
-                        timestamp=time.time(), memory_type="semantic",
-                        metadata={"orig": e.id, "access_count": e.access_count},
-                    )
+                    MemoryEntry(f"cons_{e.id}", f"[Consolidated] {e.content}",
+                                e.embedding, e.topic, e.agent_id, time.time(), memory_type="semantic",
+                                metadata={"orig": e.id, "access_count": e.access_count})
                 ); moved += 1
             else: keep.append(e)
         self.episodic = keep; return moved
 
 class TCMWithLLMMemoryLite:
     def __init__(self, agents: List[str], topics: List[str], chat_model: str = "gpt-4o-mini"):
-        self.client = OpenAI()
-        self.chat_model = chat_model
-        self.agents = agents
-        self.topics = topics
+        self.client = OpenAI(); self.chat_model = chat_model
+        self.agents = agents; self.topics = topics
         self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
         self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
         self.mem_shared = LLMCoreMemoryLite(self.client)
@@ -263,12 +218,17 @@ class TCMWithLLMMemoryLite:
             if any(kw in t for kw in kws): return k
         return self.topics[0] if self.topics else "general"
 
-    def _expert(self, topic: str) -> str:
-        s = {}
+    def thompson_draws(self, topic: str, seed: Optional[int] = None) -> Dict[str, float]:
+        if seed is not None: np.random.seed(seed)
+        draws = {}
         for a in self.agents:
             p = self.trust[f"{a}:{topic}"]
-            s[a] = np.random.beta(p["alpha"], p["beta"])
-        return max(s, key=s.get)
+            draws[a] = float(np.random.beta(p["alpha"], p["beta"]))
+        return draws
+
+    def _expert(self, topic: str) -> str:
+        scores = self.thompson_draws(topic)  # random draw
+        return max(scores, key=scores.get)
 
     def _format_mem(self, mems: List[MemoryEntry]) -> str:
         if not mems: return "No relevant memories."
@@ -347,8 +307,10 @@ Craft a helpful, accurate answer that uses the memories when relevant.
 # ---------- Engine cache ----------
 @st.cache_resource(show_spinner=False)
 def get_engine():
-    return TCMWithLLMMemoryLite(agents=["researcher","analyst","engineer"],
-                                topics=["research","planning","coding","ml","nlp"])
+    return TCMWithLLMMemoryLite(
+        agents=["researcher","analyst","engineer"],
+        topics=["research","planning","coding","ml","nlp"]
+    )
 tcm = get_engine()
 
 # ---------- Header ----------
@@ -385,14 +347,46 @@ with left:
         tcm.mem_shared.add_memory("Cosine similarity = dot(a,b)/(|a||b|).", "coding", "seed", "semantic")
         st.success("Seeded.")
     run = c2.button("Ask")
-
     st.markdown('</div></div>', unsafe_allow_html=True)
 
+    # Routing overlay & consistent delegation
     if run and q.strip():
-        with st.spinner("Generating answer..."):
-            out = tcm.process(q.strip())
-            st.session_state.last = out
+        topic_preview = tcm._topic(q.strip())
+        seed = int(time.time()*1e6) & 0xffffffff
+        draws = tcm.thompson_draws(topic_preview, seed=seed)   # preview scores
+        winner = max(draws, key=draws.get)
 
+        # Overlay with animated bars
+        rows = "".join([
+            f"""
+            <div class="row">
+              <div class="small">{a.title()}</div>
+              <div class="routebar"><span style="width:{v*100:.1f}%"></span></div>
+              <div class="small">{v:.3f}</div>
+            </div>
+            """
+            for a, v in draws.items()
+        ])
+        overlay = st.empty()
+        overlay.markdown(f"""
+        <div class="overlay">
+          <div class="routebox shell">
+            <div style="font-weight:700; margin-bottom:8px;">Routing to best expert for <span style="color:#a0c7ff">{topic_preview}</span>…</div>
+            {rows}
+            <div class="small" style="margin-top:10px;">Selected: <b>{winner.title()}</b> (higher Beta draw ⇒ more likely delegated)</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(1.2)  # let the animation play
+
+        # Run with same draws (seed) & fixed requester so RNG matches
+        requester = random.choice(tcm.agents)  # independent of NumPy RNG
+        np.random.seed(seed)
+        out = tcm.process(q.strip(), requester=requester)
+        overlay.empty()  # hide overlay
+        st.session_state.last = out
+
+    # Result
     if "last" in st.session_state:
         out = st.session_state.last
         delegated = bool(out["delegated"])
@@ -415,7 +409,7 @@ with left:
     else:
         st.markdown("<div class='hint'>Ask something to see routing and answers here.</div>", unsafe_allow_html=True)
 
-# Right: metrics + agent trust
+# Right: metrics + agents
 with right:
     s = tcm.summary()
     st.markdown('<div class="grid">', unsafe_allow_html=True)
@@ -433,18 +427,15 @@ with right:
     chip("Total consolidations", s["total_consolidations"])
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Agent trust cards (aggregate across topics)
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.markdown('<div class="shell soft">', unsafe_allow_html=True)
     st.write("Agents")
-    trust = s["trust"]
-    agents = ["researcher","analyst","engineer"]
+    trust = s["trust"]; agents = ["researcher","analyst","engineer"]
     colA, colB, colC = st.columns(3)
-    cols = [colA, colB, colC]
-    for i, a in enumerate(agents):
+    for col, a in zip([colA,colB,colC], agents):
         vals = [v for k,v in trust.items() if k.startswith(a + ":")]
         avg = sum(vals)/len(vals) if vals else 0.5
-        with cols[i]:
+        with col:
             st.markdown(f"""
             <div class="agent">
               <div class="name">{a.title()}</div>
@@ -454,5 +445,15 @@ with right:
             """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+# How it works
+with st.expander("How delegation works (short)"):
+    st.markdown("""
+- Each **agent×topic** keeps a Beta distribution with parameters *(α, β)* starting at (1,1).
+- On each query: we draw one sample from **Beta(α, β)** for every agent for that topic (**Thompson sampling**).  
+  The agent with the **highest draw** gets the task.
+- After we check the response quality (lightweight heuristic), we update trust:  
+  success ⇒ **α += 1**, failure ⇒ **β += 1**.  
+  The **mean trust** shown in the UI is **α/(α+β)**.
+- Over time this converges toward the best expert for each topic while still exploring others.
+""")
 st.caption("Tip: trust improves as you interact more. Seed memories to give agents context quickly.")
