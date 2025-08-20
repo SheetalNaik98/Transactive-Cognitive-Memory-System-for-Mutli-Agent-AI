@@ -1,94 +1,84 @@
 #!/usr/bin/env python3
-import os, json, time
+import os, json, importlib.util
+from pathlib import Path
 import streamlit as st
-
-# Make sure our package is importable when running on Streamlit Cloud
-from tcm_core.study2_lite import TCMWithLLMMemoryLite
-
-st.set_page_config(page_title="TCM-core", page_icon="🧠", layout="wide")
 
 # -----------------------------
 # Secrets / API key
 # -----------------------------
-# Prefer Streamlit secrets → fallback to env var
-OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-if not OPENAI_KEY:
-    st.error("Set your OpenAI key in Streamlit → App → Settings → Secrets as `OPENAI_API_KEY`.")
+if not os.getenv("OPENAI_API_KEY"):
+    # Prefer Streamlit Secrets; fall back to env if present
+    api_key = st.secrets.get("OPENAI_API_KEY", "")
+    if api_key:
+        os.environ["OPENAI_API_KEY"] = api_key
+
+# -----------------------------
+# Dynamic import of file with spaces & '+'
+# -----------------------------
+BASE_DIR = Path(__file__).parent
+MOD_PATH = BASE_DIR / "tcm_core" / "TCM + LLM Core Memory.py"
+if not MOD_PATH.exists():
+    st.error(f"Backend file not found at: {MOD_PATH}")
     st.stop()
-os.environ["OPENAI_API_KEY"] = OPENAI_KEY  # used by study2_lite internals
+
+spec = importlib.util.spec_from_file_location("tcm_llm_core", str(MOD_PATH))
+tcm_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tcm_mod)
+
+TCM = tcm_mod.TCMWithLLMMemoryLite
 
 # -----------------------------
-# Build / cache the TCM system
+# App state
 # -----------------------------
-@st.cache_resource(show_spinner=False)
-def init_system():
-    agents = ["researcher", "analyst", "engineer"]
-    topics = ["research", "planning", "coding", "ml", "nlp"]
-    return TCMWithLLMMemoryLite(agents=agents, topics=topics)
+if "tcm" not in st.session_state:
+    st.session_state.tcm = TCM(
+        agents=["researcher","analyst","engineer"],
+        topics=["research","planning","coding","ml","nlp"],
+        chat_model="gpt-4o-mini",
+        embed_model="text-embedding-3-small"
+    )
 
-tcm = init_system()
-if "history" not in st.session_state:
-    st.session_state.history = []  # chat history (list of dicts)
-
-# -----------------------------
-# Sidebar controls
-# -----------------------------
-with st.sidebar:
-    st.header("⚙️ Controls")
-    if st.button("🔄 Seed default knowledge", use_container_width=True):
-        n = tcm.seed_defaults()
-        st.success(f"Seeded {n} shared semantic memories")
-
-    st.divider()
-    st.subheader("➕ Add memory")
-    new_topic = st.selectbox("Topic", ["planning","research","coding","ml","nlp","general"], index=0)
-    new_text = st.text_area("Content", placeholder="Paste a fact/snippet to store in shared memory…")
-    if st.button("Save to shared memory", use_container_width=True, disabled=not new_text.strip()):
-        tcm.add_shared_memory(new_text.strip(), new_topic, who="user")
-        st.toast("Saved to shared semantic memory", icon="✅")
-
-    st.divider()
-    st.subheader("📊 Live metrics")
-    m = tcm.summary()
-    st.metric("Total queries", m["total_queries"])
-    st.metric("Delegation rate", f"{m['delegation_rate']*100:.1f}%")
-    st.metric("Avg memories used", f"{m['avg_memories_used']:.2f}")
-    st.metric("Memory hit rate", f"{m['avg_memory_hit_rate']:.2f}")
-    st.metric("Consolidations", m["total_consolidations"])
+tcm = st.session_state.tcm
 
 # -----------------------------
-# Main area
+# UI
 # -----------------------------
-st.title("🧠 TCM-core — Study 2 (TCM + LLM Memory)")
-st.caption("Trust-based delegation (Thompson sampling) + hierarchical memory (episodic/semantic).")
+st.set_page_config(page_title="TCM + LLM Core Memory", page_icon="🧠", layout="centered")
 
-# Chat-like input
-user_query = st.chat_input("Ask anything (e.g., 'Explain self-attention' or 'Plan an MVP rollout…')")
+st.title("🧠 TCM + LLM Core Memory")
+st.caption("Trust-based delegation + memory-augmented answering (Study 2)")
 
-if user_query:
-    with st.spinner("Thinking with TCM…"):
-        out = tcm.process(user_query)
-    st.session_state.history.append(out)
+with st.expander("Seed shared knowledge (safe to re-run)", expanded=False):
+    if st.button("Seed now", type="primary"):
+        tcm.seed_shared()
+        st.success("Seeded 3 semantic memories into the shared store.")
 
-# Show conversation
-for item in st.session_state.history[-10:]:  # show last 10
-    with st.chat_message("user"):
-        st.write(item["query"])
-    with st.chat_message("assistant"):
-        st.write(item["response"])
-        st.caption(f"Agent **{item['expert']}** | Topic **{item['topic']}** | Delegated: **{item['delegated']}** | Trust now: **{item['trust_score']:.3f}**")
+st.markdown("### Ask a question")
+q = st.text_area("Your query", placeholder="e.g., Explain self-attention in transformers")
+cols = st.columns(2)
+with cols[0]:
+    requester = st.selectbox("Requesting agent", ["auto","researcher","analyst","engineer"], index=0)
+with cols[1]:
+    run = st.button("Ask", type="primary")
 
-st.divider()
+if run and q.strip():
+    req = None if requester == "auto" else requester
+    out = tcm.process(q.strip(), requester=req)
+    st.markdown("#### Answer")
+    st.write(out["response"])
+    st.caption(f"Expert: **{out['expert']}** · Delegated: **{out['delegated']}** · Topic: **{out['topic']}** · Memories used: **{out['memories_used']}** · Trust now: **{out['trust_score']:.3f}**")
 
-# Trust table
-st.subheader("Trust by (agent:topic)")
-trust = tcm.summary().get("trust", {})
-if not trust:
-    st.info("No trust observations yet.")
+st.markdown("### Metrics")
+m = tcm.summary()
+met1, met2, met3 = st.columns(3)
+met1.metric("Delegation rate", f"{m['delegation_rate']*100:.1f}%")
+met2.metric("Avg memories used", f"{m['avg_memories_used']:.2f}")
+met3.metric("Consolidations", f"{m['total_consolidations']}")
+
+st.markdown("#### Trust (by agent:topic)")
+if m["trust"]:
+    import pandas as pd
+    trust_rows = [{"agent_topic": k, "trust": v} for k, v in m["trust"].items()]
+    st.dataframe(pd.DataFrame(trust_rows).sort_values("trust", ascending=False), hide_index=True, use_container_width=True)
 else:
-    # Pretty print in a small grid
-    rows = []
-    for k, v in sorted(trust.items()):
-        agent, topic = k.split(":")
-        rows.append({"agent": agent, "topic": topic, "trust": round(v, 3)})
-    st.dataframe(rows, hide_index=True, use_container_width=True)
+    st.info("No trust observations yet. Ask a question to start learning.")
