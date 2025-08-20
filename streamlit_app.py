@@ -36,26 +36,14 @@ def inject_css():
         --muted:#9aa3ad; --text:#e7e9ee; --accent:#7fb4ff; --ok:#1fbf75; --bad:#e24c4b;
       }
 
-      /* Brand */
-      .brandwrap {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 18px 0 8px;
-        margin-bottom: 8px;
-      }
+      /* Brand header */
+      .brandwrap { display:flex; align-items:center; justify-content:center; padding:18px 0 8px; margin-bottom:8px; }
       .logotype {
-        font-weight: 800;
-        letter-spacing: 0.6px;
-        font-size: clamp(22px, 4.5vw, 34px);
-        line-height: 1.05;
+        font-weight:800; letter-spacing:.6px; font-size:clamp(22px, 4.5vw, 34px); line-height:1.05;
         background: linear-gradient(90deg, #9bc6ff 0%, #6fb3ff 35%, #42df9b 70%, #a0ffcb 100%);
-        -webkit-background-clip: text; background-clip: text; color: transparent;
+        -webkit-background-clip:text; background-clip:text; color:transparent;
         filter: drop-shadow(0 8px 18px rgba(68,170,255,.16));
-        background-size: 180% 100%;
-        animation: shimmer 4.5s ease-in-out 0.3s both infinite;
-        margin: 0;
-        text-align:center;
+        background-size:180% 100%; animation: shimmer 4.5s ease-in-out .3s both infinite; margin:0; text-align:center;
       }
       .tag { text-align:center; color:#aeb6bf; margin-top:4px; }
       @keyframes shimmer { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
@@ -76,10 +64,9 @@ def inject_css():
         padding:14px 16px; border-radius:12px; margin-bottom:12px;
       }
 
-      /* Metrics grid with generous space */
+      /* Metrics grid with generous space (one per row) */
       .grid{ display:grid; gap: 24px; grid-template-columns: 1fr; }
-      @media (min-width:1100px){ .grid{ grid-template-columns: repeat(2, 1fr); } }
-      @media (min-width:1300px){ .grid{ grid-template-columns: repeat(1, 1fr); } } /* one per row on wide sidebar */
+      @media (min-width:1100px){ .grid{ grid-template-columns: 1fr; } }
 
       .chip{
         padding: 16px; border-radius:14px;
@@ -120,10 +107,13 @@ def inject_css():
                 display:flex; align-items:center; justify-content:center;
                 background: rgba(5,7,10,.55); backdrop-filter: blur(4px); }
       .routebox{ width:min(720px, 92vw); }
-      .row{ display:grid; grid-template-columns: 150px 1fr 70px; gap:12px; align-items:center; }
-      .routebar{ position:relative; height:10px; border-radius:999px; background:#0e1116; border:1px solid var(--stroke); overflow:hidden;}
-      .routebar > span{ display:block; height:100%; background: linear-gradient(90deg, #7fb4ff, #1fbf75); width:0%; animation: fill .8s ease forwards; }
       .small{ color:var(--muted); font-size:12px; }
+
+      /* --- Prompt area helpers --- */
+      .qbox div[data-testid="stTextInput"] { display: none !important; } /* kill stray empty input rows */
+      .sectiontitle{
+        color:#e7e9ee; font-weight:700; font-size:15px; letter-spacing:.2px; margin:2px 0 8px;
+      }
     </style>
     """, unsafe_allow_html=True)
 
@@ -410,13 +400,19 @@ left, right = st.columns([7, 5], gap="large")
 
 # Left: question → routing → answers
 with left:
-    st.markdown('<div class="shell">', unsafe_allow_html=True)
+    st.markdown('<div class="shell qbox">', unsafe_allow_html=True)
+
+    # Clean, catchy title (no Streamlit default label)
+    st.markdown('<div class="sectiontitle">What should we tackle?</div>', unsafe_allow_html=True)
+
+    # Single textarea (label collapsed so nothing extra shows above it)
     q = st.text_area(
-        "Question",
-        placeholder="Ask anything… e.g., “Plan an MVP rollout for a chatbot”",
+        label="",
+        placeholder="Describe the outcome you want… e.g., “Plan an MVP rollout for a chatbot.”",
         height=120,
-        help="Type your question. Orchestrix will route it to the best internal expert for the topic."
+        label_visibility="collapsed"
     )
+
     c1, c2, c3 = st.columns([1,1,2])
     with c1:
         load_demo = st.button(
@@ -441,8 +437,7 @@ with left:
     if run and q.strip():
         topic_preview = tcm._topic(q.strip())
         seed = int(time.time() * 1e6) & 0xffffffff
-        draws = tcm.thompson_draws(topic_preview, seed=seed)
-        winner = max(draws, key=draws.get)
+        _ = tcm.thompson_draws(topic_preview, seed=seed)  # preview draw for consistency
 
         # Friendly overlay (no raw numbers by default)
         overlay = st.empty()
@@ -467,6 +462,8 @@ with left:
         # Optional baseline comparison
         if compare:
             st.session_state.baseline = direct.answer(q.strip())
+        else:
+            st.session_state.baseline = None
 
     # Render results
     if "last" in st.session_state:
@@ -486,13 +483,17 @@ with left:
           <span class="badge">Trust score: {out['trust_score']:.3f}</span>
         </div>
         <div class="hint" style="margin-top:6px;">
-          Why this is different from a normal chat: Orchestrix routes by learned trust per topic and
+          Why this differs from a normal chat: Orchestrix routes by learned trust per topic and
           pulls prior knowledge from memory before answering.
         </div>
         """, unsafe_allow_html=True)
 
         # Answer(s)
-        colA, colB = st.columns(2) if ("baseline" in st.session_state and st.session_state.baseline and compare) else (st.columns(1)[0], None)
+        if st.session_state.get("baseline") and compare:
+            colA, colB = st.columns(2)
+        else:
+            colA = st.columns(1)[0]; colB = None
+
         with colA:
             st.subheader("Orchestrix answer")
             st.markdown('<div class="answer">', unsafe_allow_html=True)
@@ -522,7 +523,6 @@ with left:
 # Right: metrics + agents
 with right:
     s = tcm.metrics if hasattr(tcm, "metrics") else {"total":0,"delegations":0,"mems_used":[],"hit_rate":[],"consolidations":0}
-    # Compute a fresh summary to display
     tot = max(1, s.get("total",0))
     summary = {
         "total_queries": s.get("total",0),
