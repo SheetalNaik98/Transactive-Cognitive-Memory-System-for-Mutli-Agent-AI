@@ -13,121 +13,62 @@ from openai import OpenAI
 import streamlit as st
 
 # ---------------- Page / Theme ----------------
-st.set_page_config(page_title="TCM + LLM Core Memory", layout="wide")
+st.set_page_config(page_title="Orchestrix", layout="wide")
 
 def inject_css():
+    def inject_css():
     st.markdown("""
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..800&display=swap');
-      html, body, [data-testid="stAppViewContainer"] * { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-      [data-testid="stAppViewContainer"]{
-        background:
-          radial-gradient(60rem 40rem at -10% -10%, #1b1c20 0%, rgba(0,0,0,0) 60%),
-          radial-gradient(50rem 30rem at 110% -10%, #15202e 0%, rgba(0,0,0,0) 60%),
-          radial-gradient(70rem 40rem at 50% 120%, #13151a 0%, rgba(0,0,0,0) 70%),
-          #0b0c0f;
+      /* --- Orchestrix brand header --- */
+      .brandwrap {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px 0 6px;
+        margin: -16px 0 4px; /* tuck closer to top */
+        backdrop-filter: blur(6px);
+        background: linear-gradient(180deg, rgba(10,12,16,.55), rgba(10,12,16,0));
+        border-bottom: 1px solid rgba(255,255,255,0.06);
       }
-      [data-testid="stHeader"] { background: transparent; }
-
-      :root{
-        --glass: rgba(255,255,255,0.04);
-        --glass-strong: rgba(255,255,255,0.06);
-        --stroke: rgba(255,255,255,0.10);
-        --muted:#9aa3ad; --text:#e7e9ee; --accent:#7fb4ff; --ok:#1fbf75; --bad:#e24c4b;
+      .logo {
+        display:flex; flex-direction:column; align-items:center;
+        gap:6px; transform: translateY(6px); opacity:0;
+        animation: brandIn .65s ease-out forwards;
+        text-align:center;
       }
-
-      .shell{
-        border: 1px solid var(--stroke);
-        background: linear-gradient(180deg, var(--glass-strong), rgba(255,255,255,0.02));
-        border-radius: 16px; padding: 16px;
-        backdrop-filter: blur(8px);
-        box-shadow: 0 10px 35px rgba(0,0,0,.35);
+      .logotype {
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        font-size: clamp(22px, 4.5vw, 34px);
+        line-height: 1.05;
+        background: linear-gradient(90deg, #9bc6ff 0%, #6fb3ff 35%, #42df9b 70%, #a0ffcb 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        filter: drop-shadow(0 8px 18px rgba(68,170,255,.16));
+        background-size: 180% 100%;
+        animation: shimmer 4.5s ease-in-out 0.3s both infinite;
       }
-      .shell.soft{ background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)); }
-      .halo{ position: relative; border-radius: 16px; padding: 1px;
-        background: linear-gradient(135deg, rgba(127,180,255,.35), rgba(31,191,117,.35)); }
-      .halo > .inner{ border-radius: 15px; background: rgba(14,15,19,.9); padding: 16px; border: 1px solid var(--stroke); backdrop-filter: blur(8px); }
-
-      .headline{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
-      .headline h1{ margin:0; font-size:28px; letter-spacing:.2px; color:var(--text); }
-      .headline .sub{ color:var(--muted); margin-top:2px; }
-
-      .brandimg { height:40px; width:auto; border-radius:8px; border:1px solid var(--stroke); }
-
-      .disclaimer{
-        border:1px solid var(--stroke); color:var(--muted);
-        background: linear-gradient(180deg, rgba(127,180,255,.05), rgba(31,191,117,.05));
-        padding:14px 16px; border-radius:12px; margin-top:8px;
+      .tag {
+        font-size: 13px;
+        color: #9aa3ad;
+        letter-spacing: .25px;
       }
-
-      /* Metrics grid with spacious layout */
-      .grid{ display:grid; gap: 28px; grid-template-columns: repeat(2, 1fr); margin-top: 8px; }
-      @media (min-width:1100px){ .grid{ grid-template-columns: repeat(3, 1fr); } }
-      @media (max-width:700px){ .grid{ grid-template-columns: 1fr; } }
-
-      .chip{
-        padding: 16px; border-radius:14px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-        border:1px solid var(--stroke);
-        box-shadow: 0 8px 24px rgba(0,0,0,.30);
-        transform: translateY(6px); opacity:0; animation: rise .45s ease forwards;
+      @keyframes brandIn {
+        0% { transform: translateY(10px) scale(.985); filter: blur(2px); opacity:0; }
+        100% { transform: translateY(0) scale(1); filter: blur(0); opacity:1; }
       }
-      .chip .label{ color:var(--muted); font-size:12px; letter-spacing:.4px; text-transform:uppercase; }
-      .chip .value{ font-size:28px; font-weight:700; padding-top:2px; }
-      @keyframes rise { to { transform: translateY(0); opacity:1; } }
-
-      .status{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-      .badge{ padding:7px 12px; border-radius:999px; font-weight:700; font-size:12px;
-              border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text); }
-      .badge-topic { color:#a0c7ff; border-color:rgba(127,180,255,.35); background: rgba(127,180,255,.08); }
-      .badge-mem   { color:#ffd39c; border-color:rgba(255,196,127,.32); background: rgba(255,196,127,.08); }
-      .delegation.ok{ color:#fff; border:1px solid var(--stroke);
-                      background: linear-gradient(90deg, #0f7a46, #12a35b); animation: pulseG 1.1s ease-in-out 3; }
-      .delegation.bad{ color:#fff; border:1px solid var(--stroke);
-                       background: linear-gradient(90deg, #a32725, #d8423f); animation: pulseR 1.1s ease-in-out 3; }
-      @keyframes pulseG{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
-      @keyframes pulseR{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
-
-      .answer{ background: rgba(255,255,255,.03); border:1px solid var(--stroke); border-radius:12px; padding:16px; color:var(--text); }
-
-      .agent{ border:1px solid var(--stroke); border-radius:14px; padding:14px;
-              background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)); }
-      .agent .name{ font-weight:700; }
-      .bar{ width:100%; height:8px; background:#13161b; border-radius:999px; border:1px solid var(--stroke); overflow:hidden; }
-      .bar > span{ display:block; height:100%;
-                   background: linear-gradient(90deg, #ff6b6b, #ffd166 50%, #1fbf75);
-                   width:0%; animation: fill .7s ease forwards; }
-      @keyframes fill{ from{ width:0%; } }
-
-      .btnrow{ display:flex; gap:10px; }
-      .hint{ color:var(--muted); font-size:13px; }
-
-      /* Routing overlay */
-      .overlay{ position: fixed; inset: 0; z-index: 9999;
-                display:flex; align-items:center; justify-content:center;
-                background: rgba(5,7,10,.55); backdrop-filter: blur(4px); }
-      .routebox{ width:min(720px, 92vw); }
-      .row{ display:grid; grid-template-columns: 150px 1fr 70px; gap:12px; align-items:center; }
-      .routebar{ position:relative; height:10px; border-radius:999px; background:#0e1116; border:1px solid var(--stroke); overflow:hidden;}
-      .routebar > span{ display:block; height:100%; background: linear-gradient(90deg, #7fb4ff, #1fbf75); width:0%; animation: fill .8s ease forwards; }
-      .small{ color:var(--muted); font-size:12px; }
-
-      /* Clean end-user loader */
-      .loader{
-        height: 10px; width: 100%; border-radius:999px; overflow:hidden;
-        background:#0e1116; border:1px solid var(--stroke); position: relative;
-        margin: 10px 0 6px 0;
+      @keyframes shimmer {
+        0%   { background-position: 0% 50%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
       }
-      .loader:before{
-        content:""; position:absolute; inset:0;
-        background: linear-gradient(90deg, #7fb4ff33, #7fb4ff, #7fb4ff33);
-        width:28%; animation: load 1.1s linear infinite;
-      }
-      @keyframes load { 0%{ transform: translateX(-30%); } 100%{ transform: translateX(330%); } }
-      .steps { color: var(--text); line-height: 1.55; margin-top: 8px; }
-      .steps .muted { color: var(--muted); }
     </style>
     """, unsafe_allow_html=True)
+
 
 inject_css()
 
