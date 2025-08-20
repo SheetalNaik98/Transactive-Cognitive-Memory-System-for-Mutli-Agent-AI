@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Orchestrix — Trust-routed multi-agent memory with a modern dark UI
-# Single-file Streamlit app (no local imports)
+# Orchestrix — TCM + LLM Core Memory
+# Streamlit single-file app with clear UX + baseline comparison
 
 import os, time, hashlib, random
 from dataclasses import dataclass, field
@@ -36,59 +36,60 @@ def inject_css():
         --muted:#9aa3ad; --text:#e7e9ee; --accent:#7fb4ff; --ok:#1fbf75; --bad:#e24c4b;
       }
 
-      /* --- Orchestrix brand header --- */
+      /* Brand */
       .brandwrap {
-        position: sticky; top: 0; z-index: 50;
-        display: flex; align-items: center; justify-content: center;
-        padding: 18px 0 6px; margin: -16px 0 4px;
-        backdrop-filter: blur(6px);
-        background: linear-gradient(180deg, rgba(10,12,16,.55), rgba(10,12,16,0));
-        border-bottom: 1px solid rgba(255,255,255,0.06);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px 0 8px;
+        margin-bottom: 8px;
       }
-      .logo { display:flex; flex-direction:column; align-items:center; gap:6px;
-              transform: translateY(6px); opacity:0; animation: brandIn .65s ease-out forwards; text-align:center; }
       .logotype {
-        font-weight: 800; letter-spacing: .6px;
-        font-size: clamp(22px, 4.5vw, 34px); line-height: 1.05;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        font-size: clamp(22px, 4.5vw, 34px);
+        line-height: 1.05;
         background: linear-gradient(90deg, #9bc6ff 0%, #6fb3ff 35%, #42df9b 70%, #a0ffcb 100%);
         -webkit-background-clip: text; background-clip: text; color: transparent;
         filter: drop-shadow(0 8px 18px rgba(68,170,255,.16));
-        background-size: 180% 100%; animation: shimmer 4.5s ease-in-out .3s both infinite;
+        background-size: 180% 100%;
+        animation: shimmer 4.5s ease-in-out 0.3s both infinite;
+        margin: 0;
+        text-align:center;
       }
-      .tag { font-size: 13px; color: var(--muted); letter-spacing: .25px; }
-      @keyframes brandIn { 0%{ transform: translateY(10px) scale(.985); filter: blur(2px); opacity:0; }
-                           100%{ transform: translateY(0) scale(1); filter: blur(0); opacity:1; } }
-      @keyframes shimmer { 0%{ background-position: 0% 50%; } 50%{ background-position: 100% 50%; } 100%{ background-position: 0% 50%; } }
+      .tag { text-align:center; color:#aeb6bf; margin-top:4px; }
+      @keyframes shimmer { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
 
+      /* Cards & spacing */
       .shell{
         border: 1px solid var(--stroke);
         background: linear-gradient(180deg, var(--glass-strong), rgba(255,255,255,0.02));
-        border-radius: 16px; padding: 16px; backdrop-filter: blur(8px);
+        border-radius: 16px; padding: 16px;
+        backdrop-filter: blur(8px);
         box-shadow: 0 10px 35px rgba(0,0,0,.35);
       }
       .shell.soft{ background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)); }
-      .halo{ position: relative; border-radius: 16px; padding: 1px;
-             background: linear-gradient(135deg, rgba(127,180,255,.35), rgba(31,191,117,.35)); }
-      .halo > .inner{ border-radius: 15px; background: rgba(14,15,19,.9); padding: 16px; border: 1px solid var(--stroke); backdrop-filter: blur(8px); }
 
       .disclaimer{
         border:1px solid var(--stroke); color:var(--muted);
         background: linear-gradient(180deg, rgba(127,180,255,.05), rgba(31,191,117,.05));
-        padding:14px 16px; border-radius:12px;
+        padding:14px 16px; border-radius:12px; margin-bottom:12px;
       }
 
-      /* Metrics grid with generous spacing */
-      .grid{ display:grid; gap: 22px; grid-template-columns: repeat(2, 1fr); margin-top: 6px; }
-      @media (min-width:1100px){ .grid{ grid-template-columns: repeat(3, 1fr); } }
-      @media (max-width:700px){ .grid{ grid-template-columns: 1fr; } }
+      /* Metrics grid with generous space */
+      .grid{ display:grid; gap: 24px; grid-template-columns: 1fr; }
+      @media (min-width:1100px){ .grid{ grid-template-columns: repeat(2, 1fr); } }
+      @media (min-width:1300px){ .grid{ grid-template-columns: repeat(1, 1fr); } } /* one per row on wide sidebar */
+
       .chip{
         padding: 16px; border-radius:14px;
         background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-        border:1px solid var(--stroke); box-shadow: 0 8px 24px rgba(0,0,0,.30);
+        border:1px solid var(--stroke);
+        box-shadow: 0 8px 24px rgba(0,0,0,.30);
         transform: translateY(6px); opacity:0; animation: rise .45s ease forwards;
       }
       .chip .label{ color:var(--muted); font-size:12px; letter-spacing:.4px; text-transform:uppercase; }
-      .chip .value{ font-size:28px; font-weight:700; padding-top:2px; }
+      .chip .value{ font-size:28px; font-weight:700; padding-top:4px; }
       @keyframes rise { to { transform: translateY(0); opacity:1; } }
 
       .status{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
@@ -97,14 +98,11 @@ def inject_css():
       .badge-topic { color:#a0c7ff; border-color:rgba(127,180,255,.35); background: rgba(127,180,255,.08); }
       .badge-mem   { color:#ffd39c; border-color:rgba(255,196,127,.32); background: rgba(255,196,127,.08); }
       .delegation.ok{ color:#fff; border:1px solid var(--stroke);
-                      background: linear-gradient(90deg, #0f7a46, #12a35b); animation: pulseG 1.1s ease-in-out 3; }
+                      background: linear-gradient(90deg, #0f7a46, #12a35b); }
       .delegation.bad{ color:#fff; border:1px solid var(--stroke);
-                       background: linear-gradient(90deg, #a32725, #d8423f); animation: pulseR 1.1s ease-in-out 3; }
-      @keyframes pulseG{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
-      @keyframes pulseR{ 0%{filter:brightness(.9)} 50%{filter:brightness(1.18)} 100%{filter:brightness(1)} }
+                       background: linear-gradient(90deg, #a32725, #d8423f); }
 
       .answer{ background: rgba(255,255,255,.03); border:1px solid var(--stroke); border-radius:12px; padding:16px; color:var(--text); }
-      .hint{ color:var(--muted); font-size:13px; }
 
       .agent{ border:1px solid var(--stroke); border-radius:14px; padding:14px;
               background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)); }
@@ -115,6 +113,8 @@ def inject_css():
                    width:0%; animation: fill .7s ease forwards; }
       @keyframes fill{ from{ width:0%; } }
 
+      .hint{ color:var(--muted); font-size:13px; }
+
       /* Routing overlay */
       .overlay{ position: fixed; inset: 0; z-index: 9999;
                 display:flex; align-items:center; justify-content:center;
@@ -124,27 +124,10 @@ def inject_css():
       .routebar{ position:relative; height:10px; border-radius:999px; background:#0e1116; border:1px solid var(--stroke); overflow:hidden;}
       .routebar > span{ display:block; height:100%; background: linear-gradient(90deg, #7fb4ff, #1fbf75); width:0%; animation: fill .8s ease forwards; }
       .small{ color:var(--muted); font-size:12px; }
-
-      .loader { width: 56px; height: 56px; border-radius: 50%;
-                border: 3px solid rgba(255,255,255,0.15); border-top-color: #7fb4ff;
-                margin: 12px auto; animation: spin .9s linear infinite; }
-      @keyframes spin { to { transform: rotate(360deg);} }
-      .steps { margin-top: 10px; color: var(--text); opacity: .9; }
-      .steps .muted { color: var(--muted); }
     </style>
     """, unsafe_allow_html=True)
 
 inject_css()
-
-# ---------------- Brand header ----------------
-st.markdown("""
-<div class="brandwrap">
-  <div class="logo">
-    <div class="logotype">Orchestrix</div>
-    <div class="tag">Think Better. Orchestrate Smarter</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
 
 # ---------------- API key helper ----------------
 def require_api_key():
@@ -154,12 +137,13 @@ def require_api_key():
         return
     with st.sidebar:
         st.write("OpenAI API Key")
-        val = st.text_input("Enter key", type="password", placeholder="sk-...")
+        val = st.text_input("Enter key", type="password", placeholder="sk-...", help="Used to call the model for answers and embeddings.")
         if val:
             os.environ["OPENAI_API_KEY"] = val.strip()
             st.success("Saved for this session.")
         else:
             st.stop()
+
 require_api_key()
 
 # ---------------- Engine (in-file) ----------------
@@ -226,7 +210,7 @@ class LLMCoreMemoryLite:
         if not entries:
             return []
         q = self._embed(query)
-        mats = np.stack([e.embedding for e in entries], axis=0)  # [N, D]
+        mats = np.stack([e.embedding for e in entries], axis=0)
         sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
         idxs = np.argsort(-sims)[:k]
         results = []
@@ -262,16 +246,13 @@ class LLMCoreMemoryLite:
 class TCMWithLLMMemoryLite:
     def __init__(self, agents: List[str], topics: List[str],
                  chat_model: str = "gpt-4o-mini"):
-        self.client = OpenAI()  # reads OPENAI_API_KEY from env
+        self.client = OpenAI()
         self.chat_model = chat_model
-
         self.agents = agents
         self.topics = topics
         self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
-
         self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
         self.mem_shared = LLMCoreMemoryLite(self.client)
-
         self.metrics = {"delegations": 0, "total": 0, "mems_used": [], "hit_rate": [], "consolidations": 0}
 
     def _topic(self, text: str) -> str:
@@ -284,13 +265,11 @@ class TCMWithLLMMemoryLite:
             "nlp":      ["nlp", "transformer", "llm", "token", "text"],
         }
         for topic, kws in rules.items():
-            if any(kw in t for kw in kws):
-                return topic
+            if any(kw in t for kw in kws): return topic
         return self.topics[0] if self.topics else "general"
 
     def thompson_draws(self, topic: str, seed: Optional[int] = None) -> Dict[str, float]:
-        if seed is not None:
-            np.random.seed(seed)
+        if seed is not None: np.random.seed(seed)
         draws = {}
         for a in self.agents:
             p = self.trust[f"{a}:{topic}"]
@@ -302,8 +281,7 @@ class TCMWithLLMMemoryLite:
         return max(scores, key=scores.get)
 
     def _format_mem(self, mems: List[MemoryEntry]) -> str:
-        if not mems:
-            return "No relevant memories."
+        if not mems: return "No relevant memories."
         return "\n".join([f"{i}. ({m.memory_type}) {m.content[:220]}..." for i, m in enumerate(mems[:5], 1)])
 
     def _call_llm(self, prompt: str) -> str:
@@ -325,10 +303,8 @@ class TCMWithLLMMemoryLite:
 
     def _update_trust(self, agent: str, topic: str, success: bool):
         k = f"{agent}:{topic}"
-        if success:
-            self.trust[k]["alpha"] += 1
-        else:
-            self.trust[k]["beta"] += 1
+        if success: self.trust[k]["alpha"] += 1
+        else:        self.trust[k]["beta"]  += 1
 
     def trust_score(self, agent: str, topic: str) -> float:
         p = self.trust[f"{agent}:{topic}"]
@@ -340,8 +316,7 @@ class TCMWithLLMMemoryLite:
         requester = requester or random.choice(self.agents)
         expert = self._expert(topic)
         delegated = expert != requester
-        if delegated:
-            self.metrics["delegations"] += 1
+        if delegated: self.metrics["delegations"] += 1
 
         local = self.mem_local[expert].retrieve(query, k=3)
         shared = self.mem_shared.retrieve(query, k=2)
@@ -377,18 +352,24 @@ Craft a helpful, accurate answer that uses the memories when relevant.
             "query": query, "response": answer, "topic": topic, "requester": requester,
             "expert": expert, "delegated": delegated, "memories_used": len(used),
             "trust_score": self.trust_score(expert, topic),
+            "mem_snippets": [m.content for m in used]
         }
 
-    def summary(self) -> Dict:
-        tot = max(1, self.metrics["total"])
-        return {
-            "total_queries": self.metrics["total"],
-            "delegation_rate": self.metrics["delegations"] / tot,
-            "avg_memories_used": float(np.mean(self.metrics["mems_used"])) if self.metrics["mems_used"] else 0.0,
-            "avg_memory_hit_rate": float(np.mean(self.metrics["hit_rate"])) if self.metrics["hit_rate"] else 0.0,
-            "total_consolidations": self.metrics["consolidations"],
-            "trust": {k: v["alpha"] / (v["alpha"] + v["beta"]) for k, v in self.trust.items()},
-        }
+# Baseline (no routing, no memory) — for comparison
+class DirectModel:
+    def __init__(self, chat_model: str = "gpt-4o-mini"):
+        self.client = OpenAI()
+        self.chat_model = chat_model
+    def answer(self, q: str) -> str:
+        try:
+            r = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[{"role":"user","content":q}],
+                temperature=0.7, max_tokens=500
+            )
+            return r.choices[0].message.content
+        except Exception as e:
+            return f"[LLM error] {e}"
 
 # ---------------- Engine cache ----------------
 @st.cache_resource(show_spinner=False)
@@ -397,7 +378,17 @@ def get_engine():
         agents=["researcher", "analyst", "engineer"],
         topics=["research", "planning", "coding", "ml", "nlp"]
     )
+
+@st.cache_resource(show_spinner=False)
+def get_direct():
+    return DirectModel()
+
 tcm = get_engine()
+direct = get_direct()
+
+# ---------------- Header ----------------
+st.markdown('<div class="brandwrap"><h1 class="logotype">Orchestrix</h1></div>', unsafe_allow_html=True)
+st.markdown('<div class="tag">Think Better. Orchestrate Smarter.</div>', unsafe_allow_html=True)
 
 # ---------------- Disclaimer ----------------
 if "hide_disc" not in st.session_state:
@@ -412,136 +403,169 @@ if not st.session_state.hide_disc:
     if st.checkbox("I understand — hide this notice from now on", value=False):
         st.session_state.hide_disc = True
 
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
 # ---------------- Layout ----------------
 left, right = st.columns([7, 5], gap="large")
 
-# Left: ask + result
+# Left: question → routing → answers
 with left:
-    st.markdown('<div class="halo"><div class="inner">', unsafe_allow_html=True)
-    st.write("Ask")
-    q = st.text_area("Your question", label_visibility="collapsed",
-                     placeholder="Plan an MVP rollout for a chatbot", height=120)
-    c1, c2 = st.columns(2)
-    if c1.button("Seed demo memories"):
-        tcm.mem_shared.add_memory("Transformers weigh token-token interactions via self-attention.", "nlp", "seed", "semantic")
-        tcm.mem_shared.add_memory("ML project: data → features → model → eval → iterate.", "planning", "seed", "semantic")
-        tcm.mem_shared.add_memory("Cosine similarity = dot(a,b)/(|a||b|).", "coding", "seed", "semantic")
-        st.success("Seeded.")
-    run = c2.button("Ask")
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="shell">', unsafe_allow_html=True)
+    q = st.text_area(
+        "Question",
+        placeholder="Ask anything… e.g., “Plan an MVP rollout for a chatbot”",
+        height=120,
+        help="Type your question. Orchestrix will route it to the best internal expert for the topic."
+    )
+    c1, c2, c3 = st.columns([1,1,2])
+    with c1:
+        load_demo = st.button(
+            "Load sample knowledge",
+            help="Adds a few generic facts (planning, NLP, cosine similarity) so you can see memory retrieval right away."
+        )
+    with c2:
+        run = st.button("Ask", help="Route to the best expert and answer with supporting memories.")
+    with c3:
+        compare = st.checkbox("Compare with direct model", value=True,
+                               help="Also show an answer straight from the model without routing or memory.")
 
-    # Routing overlay (friendly text by default; dev details optional)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if load_demo:
+        tcm.mem_shared.add_memory("Transformers weigh token-token interactions via self-attention.", "nlp", "demo", "semantic")
+        tcm.mem_shared.add_memory("ML project: data → features → model → eval → iterate.", "planning", "demo", "semantic")
+        tcm.mem_shared.add_memory("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "demo", "semantic")
+        st.info("Sample knowledge loaded. Ask a question to see memory-augmented routing.")
+
+    # Routing overlay + answer
     if run and q.strip():
         topic_preview = tcm._topic(q.strip())
         seed = int(time.time() * 1e6) & 0xffffffff
         draws = tcm.thompson_draws(topic_preview, seed=seed)
         winner = max(draws, key=draws.get)
 
-        show_debug = st.sidebar.checkbox("Show routing details", value=False)
+        # Friendly overlay (no raw numbers by default)
         overlay = st.empty()
-
-        if not show_debug:
-            overlay.markdown(f"""
-            <div class="overlay">
-              <div class="routebox shell">
-                <div style="font-weight:700; font-size:16px; margin-bottom:6px;">
-                  Finding the best expert for <span style="color:#a0c7ff">{topic_preview}</span>
-                </div>
-                <div class="loader"></div>
-                <div class="steps">
-                  <div>• Understanding your question</div>
-                  <div>• Matching topic and context</div>
-                  <div>• Checking recent knowledge and reliability</div>
-                  <div class="muted">• Selecting the best fit…</div>
-                </div>
-              </div>
+        overlay.markdown(f"""
+        <div class="overlay">
+          <div class="routebox shell">
+            <div style="font-weight:700; font-size:16px; margin-bottom:6px;">
+              Finding the best expert for <span style="color:#a0c7ff">{topic_preview}</span>
             </div>
-            """, unsafe_allow_html=True)
-            time.sleep(1.0)
-        else:
-            rows = "".join([
-                f"""
-                <div class="row">
-                  <div class="small">{a.title()}</div>
-                  <div class="routebar"><span style="width:{v*100:.1f}%"></span></div>
-                  <div class="small">{v:.3f}</div>
-                </div>
-                """ for a, v in draws.items()
-            ])
-            overlay.markdown(f"""
-            <div class="overlay">
-              <div class="routebox shell">
-                <div style="font-weight:700; margin-bottom:8px;">
-                  Routing to best expert for <span style="color:#a0c7ff">{topic_preview}</span>…
-                </div>
-                {rows}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-            time.sleep(1.2)
+            <div class="small">Understanding your question → matching topic & context → checking recent reliability → selecting the best fit…</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(1.0)
 
         requester = random.choice(tcm.agents)
-        np.random.seed(seed)  # keep RNG consistent with preview
+        np.random.seed(seed)    # match preview selection
         out = tcm.process(q.strip(), requester=requester)
         overlay.empty()
         st.session_state.last = out
 
-    # Result panel
+        # Optional baseline comparison
+        if compare:
+            st.session_state.baseline = direct.answer(q.strip())
+
+    # Render results
     if "last" in st.session_state:
         out = st.session_state.last
         delegated = bool(out["delegated"])
         cls = "delegation ok" if delegated else "delegation bad"
-        txt = "Delegated to trusted expert" if delegated else "Not delegated (handled locally)"
+        txt = "Delegated to a trusted expert" if delegated else "Handled by the initial agent"
 
+        # Routing card (plain-English)
         st.markdown('<div class="shell" style="margin-top:14px">', unsafe_allow_html=True)
         st.markdown(f"""
         <div class="status">
           <span class="badge {cls}">{txt}</span>
           <span class="badge badge-topic">Topic: {out['topic']}</span>
-          <span class="badge badge-mem">Memories: {out['memories_used']}</span>
-          <span class="badge">Trust: {out['trust_score']:.3f}</span>
+          <span class="badge badge-mem">Memories used: {out['memories_used']}</span>
           <span class="badge">Expert: {out['expert']}</span>
+          <span class="badge">Trust score: {out['trust_score']:.3f}</span>
+        </div>
+        <div class="hint" style="margin-top:6px;">
+          Why this is different from a normal chat: Orchestrix routes by learned trust per topic and
+          pulls prior knowledge from memory before answering.
         </div>
         """, unsafe_allow_html=True)
-        st.markdown('<div class="answer">', unsafe_allow_html=True)
-        st.write(out["response"])
-        st.markdown('</div></div>', unsafe_allow_html=True)
+
+        # Answer(s)
+        colA, colB = st.columns(2) if ("baseline" in st.session_state and st.session_state.baseline and compare) else (st.columns(1)[0], None)
+        with colA:
+            st.subheader("Orchestrix answer")
+            st.markdown('<div class="answer">', unsafe_allow_html=True)
+            st.write(out["response"])
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Memory reveal
+            with st.expander("Show the memory snippets used"):
+                if out["memories_used"] == 0:
+                    st.caption("No stored memories were used for this answer yet.")
+                else:
+                    for i, s in enumerate(out["mem_snippets"], 1):
+                        st.markdown(f"**{i}.** {s}")
+
+        if colB:
+            with colB:
+                st.subheader("Direct model (no routing, no memory)")
+                st.markdown('<div class="answer">', unsafe_allow_html=True)
+                st.write(st.session_state.baseline)
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.caption("This shows what you'd typically get without Orchestrix’s expert routing and memory context.")
+
+        st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.markdown("<div class='hint'>Ask something to see routing and answers here.</div>", unsafe_allow_html=True)
 
 # Right: metrics + agents
 with right:
-    s = tcm.summary()
-    st.markdown('<div class="grid">', unsafe_allow_html=True)
+    s = tcm.metrics if hasattr(tcm, "metrics") else {"total":0,"delegations":0,"mems_used":[],"hit_rate":[],"consolidations":0}
+    # Compute a fresh summary to display
+    tot = max(1, s.get("total",0))
+    summary = {
+        "total_queries": s.get("total",0),
+        "delegation_rate": s.get("delegations",0)/tot,
+        "avg_memories_used": float(np.mean(s.get("mems_used",[]))) if s.get("mems_used") else 0.0,
+        "avg_memory_hit_rate": float(np.mean(s.get("hit_rate",[]))) if s.get("hit_rate") else 0.0,
+        "total_consolidations": s.get("consolidations",0),
+    }
 
-    def chip(label, value):
+    st.markdown('<div class="grid">', unsafe_allow_html=True)
+    def chip(label, value, help_text=""):
         st.markdown(f"""
-          <div class="chip">
+          <div class="chip" title="{help_text}">
             <div class="label">{label}</div>
             <div class="value">{value}</div>
           </div>
         """, unsafe_allow_html=True)
 
-    chip("Total queries", s["total_queries"])
-    chip("Delegation rate", f"{s['delegation_rate']*100:.1f}%")
-    chip("Avg memories used", f"{s['avg_memories_used']:.2f}")
-    chip("Avg memory hit rate", f"{s['avg_memory_hit_rate']:.2f}")
-    chip("Total consolidations", s["total_consolidations"])
-    st.markdown('</div>', unsafe_allow_html=True)
+    chip("Total queries", summary["total_queries"], "How many questions you asked in this session.")
+    chip("Delegation rate", f"{summary['delegation_rate']*100:.1f}%", "Share of queries routed away from the initial agent.")
+    chip("Avg memories used", f"{summary['avg_memories_used']:.2f}", "Average number of snippets pulled from memory per answer.")
+    chip("Avg memory hit rate", f"{summary['avg_memory_hit_rate']:.2f}", "Fraction of used memories that came from the local expert vs shared pool.")
+    chip("Total consolidations", summary["total_consolidations"], "How many episodic memories hardened into semantic knowledge.")
 
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    # Agents trust
     st.markdown('<div class="shell soft">', unsafe_allow_html=True)
     st.write("Agents")
-    trust = s["trust"]; agents = ["researcher", "analyst", "engineer"]
+    trust = tcm.trust if hasattr(tcm, "trust") else {}
+    agents = ["researcher","analyst","engineer"]
     colA, colB, colC = st.columns(3)
-    for col, a in zip([colA, colB, colC], agents):
-        vals = [v for k, v in trust.items() if k.startswith(a + ":")]
+    for col, a in zip([colA,colB,colC], agents):
+        vals = []
+        for k,v in trust.items():
+            if k.startswith(a + ":"):
+                alpha, beta = v["alpha"], v["beta"]
+                vals.append(alpha/(alpha+beta))
         avg = sum(vals)/len(vals) if vals else 0.5
         with col:
             st.markdown(f"""
-            <div class="agent">
+            <div class="agent" title="Average trust across topics for {a.title()} (α/(α+β)).">
               <div class="name">{a.title()}</div>
               <div class="bar"><span style="width:{avg*100:.0f}%"></span></div>
               <div class="hint">Avg trust: {avg:.3f}</div>
@@ -550,11 +574,10 @@ with right:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # How it works (short)
-with st.expander("How delegation works"):
+with st.expander("What makes Orchestrix different?"):
     st.markdown("""
-- For each **agent × topic**, we track a Beta distribution *(α, β)* starting at (1, 1).
-- On each query we sample one value per agent (**Thompson sampling**) and pick the highest sample.
-- After answering we apply a lightweight quality check: success ⇒ **α += 1**, otherwise **β += 1**.
-- The **Avg trust** bars show the mean **α/(α+β)** aggregated across topics for each agent.
+- **Expert routing.** Each agent builds **topic-specific trust** over time. We sample from these trust distributions and route to the highest draw (Thompson sampling).
+- **Memory-augmented answers.** Relevant snippets from prior interactions are retrieved and supplied to the model before answering.
+- **Learning loop.** A lightweight quality check updates trust (success increases α; otherwise β), so routing improves the more you use it.
+- Use **“Compare with direct model”** to see the difference vs a plain model call with no routing or memory.
 """)
-st.caption("Tip: trust improves as you interact more. Use “Seed demo memories” to give immediate context.")
