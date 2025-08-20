@@ -12,9 +12,30 @@ import streamlit as st
 # ---------- Streamlit config ----------
 st.set_page_config(page_title="TCM + LLM Core Memory", page_icon="🧠", layout="wide")
 
-# Optional: read OPENAI_API_KEY from Streamlit Secrets
-if "OPENAI_API_KEY" in st.secrets and not os.getenv("OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+# ---------- API key helper ----------
+def require_api_key() -> str:
+    """
+    Load OPENAI_API_KEY from (priority):
+      1) already-set env
+      2) Streamlit secrets
+      3) user input (sidebar)
+    """
+    key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+    if key:
+        os.environ["OPENAI_API_KEY"] = key.strip()
+        return key.strip()
+
+    with st.sidebar:
+        st.warning("Add your OpenAI API key to continue.")
+        key_in = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
+        if key_in:
+            os.environ["OPENAI_API_KEY"] = key_in.strip()
+            st.success("API key saved for this session.")
+            return key_in.strip()
+        st.stop()  # pause app until user provides a key
+
+# Ensure key is available before engine construction
+_ = require_api_key()
 
 # ---------- Engine (inline) ----------
 @dataclass
@@ -81,6 +102,7 @@ class LLMCoreMemoryLite:
             return []
         q = self._embed(query)
         mats = np.stack([e.embedding for e in entries], axis=0)  # [N, D]
+        # cosine similarity
         denom = (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
         sims = mats.dot(q) / denom
         idxs = np.argsort(-sims)[:k]
@@ -116,8 +138,8 @@ class LLMCoreMemoryLite:
 
 class TCMWithLLMMemoryLite:
     def __init__(self, agents: List[str], topics: List[str],
-                 chat_model: str = "gpt-4o-mini"):
-        self.client = OpenAI()  # reads OPENAI_API_KEY from env
+                 chat_model: str = "gpt-4o-mini", api_key: Optional[str] = None):
+        self.client = OpenAI(api_key=api_key or os.environ["OPENAI_API_KEY"])
         self.chat_model = chat_model
         self.agents = agents
         self.topics = topics
@@ -245,12 +267,14 @@ Craft a helpful, accurate answer that uses the memories when relevant.
 def get_engine():
     agents = ["researcher", "analyst", "engineer"]
     topics = ["research", "planning", "coding", "ml", "nlp"]
-    return TCMWithLLMMemoryLite(agents=agents, topics=topics)
+    # pass the key explicitly (also available in env)
+    return TCMWithLLMMemoryLite(agents=agents, topics=topics, api_key=os.environ["OPENAI_API_KEY"])
 
 tcm = get_engine()
 
 st.title("🧠 TCM + LLM Core Memory")
 st.caption("Trust-based expert routing + memory-augmented answers")
+st.sidebar.success("✅ OPENAI_API_KEY loaded")
 
 left, right = st.columns([3, 2])
 
@@ -259,13 +283,28 @@ with left:
     q = st.text_area("Your question", placeholder="e.g., Plan an MVP rollout for a chatbot", height=110)
     c1, c2 = st.columns(2)
     if c1.button("Seed demo memories"):
-        tcm.mem_shared.add_memory("Transformers use self-attention to weigh token-token interactions.", "nlp", "seed", "semantic")
-        tcm.mem_shared.add_memory("Basic ML project plan: data → features → model → eval → iterate.", "planning", "seed", "semantic")
-        tcm.mem_shared.add_memory("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "seed", "semantic")
+        tcm.mem_shared.add_memory(
+            "Transformers use self-attention to weigh token-token interactions.",
+            "nlp", "seed", "semantic"
+        )
+        tcm.mem_shared.add_memory(
+            "Basic ML project plan: data → features → model → eval → iterate.",
+            "planning", "seed", "semantic"
+        )
+        tcm.mem_shared.add_memory(
+            "Cosine similarity is dot(a,b)/(|a||b|).",
+            "coding", "seed", "semantic"
+        )
         st.success("Seeded shared semantic memory.")
     if c2.button("Ask") and q.strip():
         out = tcm.process(q.strip())
-        st.write(f"**Expert:** `{out['expert']}` | **Topic:** `{out['topic']}` | **Delegated:** {out['delegated']} | **Memories:** {out['memories_used']} | **Trust:** {out['trust_score']:.3f}")
+        st.write(
+            f"**Expert:** `{out['expert']}` "
+            f"| **Topic:** `{out['topic']}` "
+            f"| **Delegated:** {out['delegated']} "
+            f"| **Memories:** {out['memories_used']} "
+            f"| **Trust:** {out['trust_score']:.3f}"
+        )
         st.markdown("**Answer**")
         st.write(out["response"])
 
@@ -274,4 +313,4 @@ with right:
     st.json(tcm.summary())
 
 st.divider()
-st.caption("Set `OPENAI_API_KEY` in Settings → Secrets.")
+st.caption("Tip: In Streamlit Cloud, set the key in Settings → *Secrets* or *Environment variables* as OPENAI_API_KEY.")
