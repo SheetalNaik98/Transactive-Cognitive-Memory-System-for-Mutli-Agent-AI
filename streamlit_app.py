@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# Premium dark UI + routing animation (no extra deps)
+# TCM + LLM Core Memory — dark, modern UI with animated routing overlay
+# Single-file Streamlit app (no local imports)
+
 import os, time, hashlib, random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -46,18 +48,20 @@ def inject_css():
         background: linear-gradient(135deg, rgba(127,180,255,.35), rgba(31,191,117,.35)); }
       .halo > .inner{ border-radius: 15px; background: rgba(14,15,19,.9); padding: 16px; border: 1px solid var(--stroke); backdrop-filter: blur(8px); }
 
-      .headline{ display:flex; align-items:end; gap:16px; margin-bottom:8px; }
+      .headline{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
       .headline h1{ margin:0; font-size:28px; letter-spacing:.2px; color:var(--text); }
-      .headline .sub{ color:var(--muted); margin-top:4px; }
+      .headline .sub{ color:var(--muted); margin-top:2px; }
+
+      .brandimg { height:40px; width:auto; border-radius:8px; border:1px solid var(--stroke); }
 
       .disclaimer{
         border:1px solid var(--stroke); color:var(--muted);
         background: linear-gradient(180deg, rgba(127,180,255,.05), rgba(31,191,117,.05));
-        padding:14px 16px; border-radius:12px;
+        padding:14px 16px; border-radius:12px; margin-top:8px;
       }
 
-      /* Metrics grid with real spacing */
-      .grid{ display:grid; gap: 22px; grid-template-columns: repeat(2, 1fr); margin-top: 6px; }
+      /* Metrics grid with spacious layout */
+      .grid{ display:grid; gap: 28px; grid-template-columns: repeat(2, 1fr); margin-top: 8px; }
       @media (min-width:1100px){ .grid{ grid-template-columns: repeat(3, 1fr); } }
       @media (max-width:700px){ .grid{ grid-template-columns: 1fr; } }
 
@@ -107,14 +111,30 @@ def inject_css():
       .routebar{ position:relative; height:10px; border-radius:999px; background:#0e1116; border:1px solid var(--stroke); overflow:hidden;}
       .routebar > span{ display:block; height:100%; background: linear-gradient(90deg, #7fb4ff, #1fbf75); width:0%; animation: fill .8s ease forwards; }
       .small{ color:var(--muted); font-size:12px; }
+
+      /* Clean end-user loader */
+      .loader{
+        height: 10px; width: 100%; border-radius:999px; overflow:hidden;
+        background:#0e1116; border:1px solid var(--stroke); position: relative;
+        margin: 10px 0 6px 0;
+      }
+      .loader:before{
+        content:""; position:absolute; inset:0;
+        background: linear-gradient(90deg, #7fb4ff33, #7fb4ff, #7fb4ff33);
+        width:28%; animation: load 1.1s linear infinite;
+      }
+      @keyframes load { 0%{ transform: translateX(-30%); } 100%{ transform: translateX(330%); } }
+      .steps { color: var(--text); line-height: 1.55; margin-top: 8px; }
+      .steps .muted { color: var(--muted); }
     </style>
     """, unsafe_allow_html=True)
 
 inject_css()
 
-# ---------------- API key ----------------
+# ---------------- API key helper ----------------
 def require_api_key():
-    key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+    # Prefer Streamlit secrets, then env, finally prompt
+    key = st.secrets.get("OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
     if key:
         os.environ["OPENAI_API_KEY"] = key.strip()
         return
@@ -126,9 +146,10 @@ def require_api_key():
             st.success("Saved for this session.")
         else:
             st.stop()
+
 require_api_key()
 
-# ---------------- Engine ----------------
+# ---------------- Engine (in-file) ----------------
 @dataclass
 class MemoryEntry:
     id: str
@@ -138,12 +159,13 @@ class MemoryEntry:
     agent_id: str
     timestamp: float
     access_count: int = 0
-    memory_type: str = "episodic"
+    memory_type: str = "episodic"  # episodic | semantic | procedural
     metadata: Dict = field(default_factory=dict)
 
 class LLMCoreMemoryLite:
     def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
-        self.client = client; self.embed_model = embed_model
+        self.client = client
+        self.embed_model = embed_model
         self.working_memory = deque(maxlen=10)
         self.episodic: List[MemoryEntry] = []
         self.semantic: Dict[str, List[MemoryEntry]] = {}
@@ -153,73 +175,109 @@ class LLMCoreMemoryLite:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=5))
     def _embed(self, text: str) -> np.ndarray:
-        h = hashlib.md5(text.encode()).hexdigest()
-        if h in self._embed_cache: return self._embed_cache[h]
-        r = self.client.embeddings.create(model=self.embed_model, input=text)
-        vec = np.array(r.data[0].embedding, dtype=np.float32)
-        self._embed_cache[h] = vec; return vec
+        key = hashlib.md5(text.encode()).hexdigest()
+        if key in self._embed_cache:
+            return self._embed_cache[key]
+        resp = self.client.embeddings.create(model=self.embed_model, input=text)
+        vec = np.array(resp.data[0].embedding, dtype=np.float32)
+        self._embed_cache[key] = vec
+        return vec
 
-    def add_memory(self, content: str, topic: str, agent_id: str, memory_type: str = "episodic") -> str:
+    def add_memory(self, content: str, topic: str, agent_id: str,
+                   memory_type: str = "episodic") -> str:
         emb = self._embed(content)
         mem_id = hashlib.md5(f"{content}{time.time()}".encode()).hexdigest()[:10]
-        e = MemoryEntry(mem_id, content, emb, topic, agent_id, time.time(), 0, memory_type)
-        if memory_type == "episodic": self.episodic.append(e); self.working_memory.append(mem_id)
-        elif memory_type == "semantic": self.semantic.setdefault(topic, []).append(e)
-        else: self.procedural[topic] = e
+        entry = MemoryEntry(
+            id=mem_id, content=content, embedding=emb,
+            topic=topic, agent_id=agent_id, timestamp=time.time(),
+            memory_type=memory_type
+        )
+        if memory_type == "episodic":
+            self.episodic.append(entry)
+            self.working_memory.append(mem_id)
+        elif memory_type == "semantic":
+            self.semantic.setdefault(topic, []).append(entry)
+        else:  # procedural
+            self.procedural[topic] = entry
         return mem_id
 
-    def _all(self) -> List[MemoryEntry]:
+    def _all_entries(self) -> List[MemoryEntry]:
         out = list(self.episodic)
-        for v in self.semantic.values(): out.extend(v)
-        out.extend(self.procedural.values()); return out
-
-    def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
-        entries = self._all()
-        if not entries: return []
-        q = self._embed(query)
-        mats = np.stack([e.embedding for e in entries], axis=0)
-        sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
-        idx = np.argsort(-sims)[:k]
-        out = []
-        for i in idx: entries[i].access_count += 1; out.append(entries[i])
+        for arr in self.semantic.values():
+            out.extend(arr)
+        out.extend(self.procedural.values())
         return out
 
+    def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
+        entries = self._all_entries()
+        if not entries:
+            return []
+        q = self._embed(query)
+        mats = np.stack([e.embedding for e in entries], axis=0)  # [N, D]
+        sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
+        idxs = np.argsort(-sims)[:k]
+        results = []
+        for i in idxs:
+            e = entries[i]
+            e.access_count += 1
+            results.append(e)
+        return results
+
     def consolidate(self) -> int:
-        moved = 0; keep: List[MemoryEntry] = []
+        moved = 0
+        keep: List[MemoryEntry] = []
         for e in self.episodic:
             if e.access_count >= self.consolidation_threshold:
                 self.semantic.setdefault(e.topic, []).append(
-                    MemoryEntry(f"cons_{e.id}", f"[Consolidated] {e.content}",
-                                e.embedding, e.topic, e.agent_id, time.time(), memory_type="semantic",
-                                metadata={"orig": e.id, "access_count": e.access_count})
-                ); moved += 1
-            else: keep.append(e)
-        self.episodic = keep; return moved
+                    MemoryEntry(
+                        id=f"cons_{e.id}",
+                        content=f"[Consolidated] {e.content}",
+                        embedding=e.embedding,
+                        topic=e.topic,
+                        agent_id=e.agent_id,
+                        timestamp=time.time(),
+                        memory_type="semantic",
+                        metadata={"orig": e.id, "access_count": e.access_count},
+                    )
+                )
+                moved += 1
+            else:
+                keep.append(e)
+        self.episodic = keep
+        return moved
 
 class TCMWithLLMMemoryLite:
-    def __init__(self, agents: List[str], topics: List[str], chat_model: str = "gpt-4o-mini"):
-        self.client = OpenAI(); self.chat_model = chat_model
-        self.agents = agents; self.topics = topics
+    def __init__(self, agents: List[str], topics: List[str],
+                 chat_model: str = "gpt-4o-mini"):
+        self.client = OpenAI()  # reads OPENAI_API_KEY from env
+        self.chat_model = chat_model
+
+        self.agents = agents
+        self.topics = topics
         self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
+
         self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
         self.mem_shared = LLMCoreMemoryLite(self.client)
+
         self.metrics = {"delegations": 0, "total": 0, "mems_used": [], "hit_rate": [], "consolidations": 0}
 
     def _topic(self, text: str) -> str:
         t = text.lower()
         rules = {
-            "planning":["plan","roadmap","strategy","schedule"],
-            "research":["research","investigate","study","analyze"],
-            "coding":["code","implement","bug","debug","write python"],
-            "ml":["ml","model","train","neural","classifier"],
-            "nlp":["nlp","transformer","llm","token","text"],
+            "planning": ["plan", "roadmap", "strategy", "schedule"],
+            "research": ["research", "investigate", "study", "analyze"],
+            "coding":   ["code", "implement", "bug", "debug", "write python"],
+            "ml":       ["ml", "model", "train", "neural", "classifier"],
+            "nlp":      ["nlp", "transformer", "llm", "token", "text"],
         }
-        for k, kws in rules.items():
-            if any(kw in t for kw in kws): return k
+        for topic, kws in rules.items():
+            if any(kw in t for kw in kws):
+                return topic
         return self.topics[0] if self.topics else "general"
 
     def thompson_draws(self, topic: str, seed: Optional[int] = None) -> Dict[str, float]:
-        if seed is not None: np.random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed)
         draws = {}
         for a in self.agents:
             p = self.trust[f"{a}:{topic}"]
@@ -227,45 +285,50 @@ class TCMWithLLMMemoryLite:
         return draws
 
     def _expert(self, topic: str) -> str:
-        scores = self.thompson_draws(topic)  # random draw
+        scores = self.thompson_draws(topic)
         return max(scores, key=scores.get)
 
     def _format_mem(self, mems: List[MemoryEntry]) -> str:
-        if not mems: return "No relevant memories."
+        if not mems:
+            return "No relevant memories."
         return "\n".join([f"{i}. ({m.memory_type}) {m.content[:220]}..." for i, m in enumerate(mems[:5], 1)])
 
     def _call_llm(self, prompt: str) -> str:
         try:
             r = self.client.chat.completions.create(
                 model=self.chat_model,
-                messages=[{"role":"user","content":prompt}],
-                temperature=0.7, max_tokens=500
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7, max_tokens=500,
             )
             return r.choices[0].message.content
         except Exception as e:
             return f"[LLM error] {e}"
 
     def _quality(self, response: str, mems: List[MemoryEntry]) -> float:
-        s = 0.5
-        if len(response) > 120: s += 0.2
-        if mems and any(m.content[:60] in response for m in mems): s += 0.3
-        return min(1.0, s)
+        score = 0.5
+        if len(response) > 120: score += 0.2
+        if mems and any(m.content[:60] in response for m in mems): score += 0.3
+        return min(1.0, score)
 
-    def _update_trust(self, agent: str, topic: str, ok: bool):
+    def _update_trust(self, agent: str, topic: str, success: bool):
         k = f"{agent}:{topic}"
-        if ok: self.trust[k]["alpha"] += 1
-        else:  self.trust[k]["beta"]  += 1
+        if success:
+            self.trust[k]["alpha"] += 1
+        else:
+            self.trust[k]["beta"] += 1
 
     def trust_score(self, agent: str, topic: str) -> float:
-        p = self.trust[f"{agent}:{topic}"]; return p["alpha"]/(p["alpha"]+p["beta"])
+        p = self.trust[f"{agent}:{topic}"]
+        return p["alpha"] / (p["alpha"] + p["beta"])
 
     def process(self, query: str, requester: Optional[str] = None) -> Dict:
         self.metrics["total"] += 1
         topic = self._topic(query)
-        requester = requester or np.random.choice(self.agents)
+        requester = requester or random.choice(self.agents)
         expert = self._expert(topic)
         delegated = expert != requester
-        if delegated: self.metrics["delegations"] += 1
+        if delegated:
+            self.metrics["delegations"] += 1
 
         local = self.mem_local[expert].retrieve(query, k=3)
         shared = self.mem_shared.retrieve(query, k=2)
@@ -280,59 +343,81 @@ User query:
 
 Craft a helpful, accurate answer that uses the memories when relevant.
 """
-        ans = self._call_llm(prompt)
-        self.mem_local[expert].add_memory(f"Q: {query}\nA: {ans}", topic, expert, "episodic")
+        answer = self._call_llm(prompt)
 
-        q = self._quality(ans, used); self._update_trust(expert, topic, q > 0.7)
-        self.metrics["consolidations"] += self.mem_local[expert].consolidate() + self.mem_shared.consolidate()
+        self.mem_local[expert].add_memory(
+            content=f"Q: {query}\nA: {answer}",
+            topic=topic, agent_id=expert, memory_type="episodic"
+        )
 
-        hit = (len(local)/max(1,len(used))) if used else 0.0
-        self.metrics["mems_used"].append(len(used)); self.metrics["hit_rate"].append(hit)
+        q_score = self._quality(answer, used)
+        self._update_trust(expert, topic, success=(q_score > 0.7))
 
-        return {"query":query,"response":ans,"topic":topic,"requester":requester,
-                "expert":expert,"delegated":delegated,"memories_used":len(used),
-                "trust_score": self.trust_score(expert, topic)}
+        self.metrics["consolidations"] += self.mem_local[expert].consolidate()
+        self.metrics["consolidations"] += self.mem_shared.consolidate()
+
+        hit = (len(local) / max(1, len(used))) if used else 0.0
+        self.metrics["mems_used"].append(len(used))
+        self.metrics["hit_rate"].append(hit)
+
+        return {
+            "query": query, "response": answer, "topic": topic, "requester": requester,
+            "expert": expert, "delegated": delegated, "memories_used": len(used),
+            "trust_score": self.trust_score(expert, topic),
+        }
 
     def summary(self) -> Dict:
         tot = max(1, self.metrics["total"])
         return {
             "total_queries": self.metrics["total"],
-            "delegation_rate": self.metrics["delegations"]/tot,
+            "delegation_rate": self.metrics["delegations"] / tot,
             "avg_memories_used": float(np.mean(self.metrics["mems_used"])) if self.metrics["mems_used"] else 0.0,
             "avg_memory_hit_rate": float(np.mean(self.metrics["hit_rate"])) if self.metrics["hit_rate"] else 0.0,
             "total_consolidations": self.metrics["consolidations"],
-            "trust": {k: v["alpha"]/(v["alpha"]+v["beta"]) for k,v in self.trust.items()},
+            "trust": {k: v["alpha"] / (v["alpha"] + v["beta"]) for k, v in self.trust.items()},
         }
 
-# ---------- Engine cache ----------
+# ---------------- Engine cache ----------------
 @st.cache_resource(show_spinner=False)
 def get_engine():
     return TCMWithLLMMemoryLite(
-        agents=["researcher","analyst","engineer"],
-        topics=["research","planning","coding","ml","nlp"]
+        agents=["researcher", "analyst", "engineer"],
+        topics=["research", "planning", "coding", "ml", "nlp"]
     )
+
 tcm = get_engine()
 
-# ---------- Header ----------
-st.markdown("""
-<div class="headline">
-  <h1>TCM + LLM Core Memory</h1>
-</div>
-<div class="sub">Trust-based expert routing with memory-augmented answers</div>
-""", unsafe_allow_html=True)
+# ---------------- Header ----------------
+brand_url = st.secrets.get("HEADER_IMAGE_URL", "")
+left_h, right_h = st.columns([8, 2])
+with left_h:
+    st.markdown("""
+    <div class="headline">
+      <h1>TCM + LLM Core Memory</h1>
+    </div>
+    <div class="sub">Trust-based expert routing with memory-augmented answers</div>
+    """, unsafe_allow_html=True)
+with right_h:
+    if brand_url:
+        st.markdown(f'<img class="brandimg" src="{brand_url}" alt="brand"/>', unsafe_allow_html=True)
 
-# ---------- Disclaimer ----------
+# ---------------- Disclaimer ----------------
 if "hide_disc" not in st.session_state:
     st.session_state.hide_disc = False
 if not st.session_state.hide_disc:
-    st.markdown('<div class="disclaimer">This system learns which agent to trust for each topic over time. Early answers may route to a less-suited agent. As you interact, the trust distribution adapts (Thompson sampling over Beta priors) and routing improves.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="disclaimer">Heads up: This system learns which agent to trust for each topic over time. '
+        'Early answers may route to a less-suited agent. As you ask more questions and we observe quality, '
+        'the trust distribution adapts (via Thompson sampling over Beta priors) and routing improves.</div>',
+        unsafe_allow_html=True
+    )
     if st.checkbox("I understand — hide this notice from now on", value=False):
         st.session_state.hide_disc = True
 
-st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ---------- Layout ----------
-left, right = st.columns([7,5], gap="large")
+# ---------------- Layout ----------------
+left, right = st.columns([7, 5], gap="large")
 
 # Left: ask + result
 with left:
@@ -349,44 +434,64 @@ with left:
     run = c2.button("Ask")
     st.markdown('</div></div>', unsafe_allow_html=True)
 
-    # Routing overlay & consistent delegation
+    # Overlay: simple UX by default, with optional dev view in sidebar
     if run and q.strip():
         topic_preview = tcm._topic(q.strip())
-        seed = int(time.time()*1e6) & 0xffffffff
-        draws = tcm.thompson_draws(topic_preview, seed=seed)   # preview scores
+        seed = int(time.time() * 1e6) & 0xffffffff
+        draws = tcm.thompson_draws(topic_preview, seed=seed)
         winner = max(draws, key=draws.get)
 
-        # Overlay with animated bars
-        rows = "".join([
-            f"""
-            <div class="row">
-              <div class="small">{a.title()}</div>
-              <div class="routebar"><span style="width:{v*100:.1f}%"></span></div>
-              <div class="small">{v:.3f}</div>
-            </div>
-            """
-            for a, v in draws.items()
-        ])
+        show_debug = st.sidebar.checkbox("Show routing details", value=False)
         overlay = st.empty()
-        overlay.markdown(f"""
-        <div class="overlay">
-          <div class="routebox shell">
-            <div style="font-weight:700; margin-bottom:8px;">Routing to best expert for <span style="color:#a0c7ff">{topic_preview}</span>…</div>
-            {rows}
-            <div class="small" style="margin-top:10px;">Selected: <b>{winner.title()}</b> (higher Beta draw ⇒ more likely delegated)</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        time.sleep(1.2)  # let the animation play
 
-        # Run with same draws (seed) & fixed requester so RNG matches
-        requester = random.choice(tcm.agents)  # independent of NumPy RNG
-        np.random.seed(seed)
+        if not show_debug:
+            overlay.markdown(f"""
+            <div class="overlay">
+              <div class="routebox shell">
+                <div style="font-weight:700; font-size:16px; margin-bottom:6px;">
+                  Finding the best expert for <span style="color:#a0c7ff">{topic_preview}</span>
+                </div>
+                <div class="loader"></div>
+                <div class="steps">
+                  <div>• Understanding your question</div>
+                  <div>• Matching topic and context</div>
+                  <div>• Checking recent knowledge and reliability</div>
+                  <div class="muted">• Selecting the best fit…</div>
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(1.0)
+        else:
+            rows = "".join([
+                f"""
+                <div class="row">
+                  <div class="small">{a.title()}</div>
+                  <div class="routebar"><span style="width:{v*100:.1f}%"></span></div>
+                  <div class="small">{v:.3f}</div>
+                </div>
+                """ for a, v in draws.items()
+            ])
+            overlay.markdown(f"""
+            <div class="overlay">
+              <div class="routebox shell">
+                <div style="font-weight:700; margin-bottom:8px;">
+                  Routing to best expert for <span style="color:#a0c7ff">{topic_preview}</span>…
+                </div>
+                {rows}
+                <div class="small" style="margin-top:10px;">Selected: <b>{winner.title()}</b></div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(1.2)
+
+        requester = random.choice(tcm.agents)
+        np.random.seed(seed)  # keep RNG consistent with preview
         out = tcm.process(q.strip(), requester=requester)
-        overlay.empty()  # hide overlay
+        overlay.empty()
         st.session_state.last = out
 
-    # Result
+    # Result panel
     if "last" in st.session_state:
         out = st.session_state.last
         delegated = bool(out["delegated"])
@@ -413,6 +518,7 @@ with left:
 with right:
     s = tcm.summary()
     st.markdown('<div class="grid">', unsafe_allow_html=True)
+
     def chip(label, value):
         st.markdown(f"""
           <div class="chip">
@@ -420,6 +526,7 @@ with right:
             <div class="value">{value}</div>
           </div>
         """, unsafe_allow_html=True)
+
     chip("Total queries", s["total_queries"])
     chip("Delegation rate", f"{s['delegation_rate']*100:.1f}%")
     chip("Avg memories used", f"{s['avg_memories_used']:.2f}")
@@ -430,10 +537,10 @@ with right:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.markdown('<div class="shell soft">', unsafe_allow_html=True)
     st.write("Agents")
-    trust = s["trust"]; agents = ["researcher","analyst","engineer"]
+    trust = s["trust"]; agents = ["researcher", "analyst", "engineer"]
     colA, colB, colC = st.columns(3)
-    for col, a in zip([colA,colB,colC], agents):
-        vals = [v for k,v in trust.items() if k.startswith(a + ":")]
+    for col, a in zip([colA, colB, colC], agents):
+        vals = [v for k, v in trust.items() if k.startswith(a + ":")]
         avg = sum(vals)/len(vals) if vals else 0.5
         with col:
             st.markdown(f"""
@@ -445,15 +552,12 @@ with right:
             """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# How it works
-with st.expander("How delegation works (short)"):
+# How it works (short)
+with st.expander("How delegation works"):
     st.markdown("""
-- Each **agent×topic** keeps a Beta distribution with parameters *(α, β)* starting at (1,1).
-- On each query: we draw one sample from **Beta(α, β)** for every agent for that topic (**Thompson sampling**).  
-  The agent with the **highest draw** gets the task.
-- After we check the response quality (lightweight heuristic), we update trust:  
-  success ⇒ **α += 1**, failure ⇒ **β += 1**.  
-  The **mean trust** shown in the UI is **α/(α+β)**.
-- Over time this converges toward the best expert for each topic while still exploring others.
+- For each **agent × topic**, we keep a Beta distribution *(α, β)* starting at (1, 1).
+- On each query we sample one value per agent (**Thompson sampling**) and pick the highest sample.
+- After answering we apply a lightweight quality check: success ⇒ **α += 1**, otherwise **β += 1**.
+- The **Avg trust** bars show the mean **α/(α+β)** aggregated across topics for each agent.
 """)
-st.caption("Tip: trust improves as you interact more. Seed memories to give agents context quickly.")
+st.caption("Tip: trust improves as you interact more. Use “Seed demo memories” to give immediate context.")
