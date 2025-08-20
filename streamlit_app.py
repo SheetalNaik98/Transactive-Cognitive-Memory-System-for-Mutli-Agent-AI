@@ -1,85 +1,277 @@
 #!/usr/bin/env python3
-import os, json
+import os, json, time, hashlib
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+from collections import defaultdict, deque
+
+import numpy as np
+from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import OpenAI
 import streamlit as st
-from tcm_core.study2_lite import TCMWithLLMMemoryLite
 
-st.set_page_config(page_title="TCM + LLM Core Memory", page_icon="🧠", layout="centered")
+# ---------- Streamlit config ----------
+st.set_page_config(page_title="TCM + LLM Core Memory", page_icon="🧠", layout="wide")
 
-# --- Secrets / API key ---
-# Prefer Streamlit Secrets; fallback to env
-if "OPENAI_API_KEY" in st.secrets:
+# Optional: read OPENAI_API_KEY from Streamlit Secrets
+if "OPENAI_API_KEY" in st.secrets and not os.getenv("OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 
-# --- Build / restore system in session ---
-def build_system():
+# ---------- Engine (inline) ----------
+@dataclass
+class MemoryEntry:
+    id: str
+    content: str
+    embedding: np.ndarray
+    topic: str
+    agent_id: str
+    timestamp: float
+    access_count: int = 0
+    memory_type: str = "episodic"  # episodic | semantic | procedural
+    metadata: Dict = field(default_factory=dict)
+
+class LLMCoreMemoryLite:
+    def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
+        self.client = client
+        self.embed_model = embed_model
+        self.working_memory = deque(maxlen=10)
+        self.episodic: List[MemoryEntry] = []
+        self.semantic: Dict[str, List[MemoryEntry]] = {}
+        self.procedural: Dict[str, MemoryEntry] = {}
+        self._embed_cache: Dict[str, np.ndarray] = {}
+        self.consolidation_threshold = 5
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=5))
+    def _embed(self, text: str) -> np.ndarray:
+        key = hashlib.md5(text.encode()).hexdigest()
+        if key in self._embed_cache:
+            return self._embed_cache[key]
+        resp = self.client.embeddings.create(model=self.embed_model, input=text)
+        vec = np.array(resp.data[0].embedding, dtype=np.float32)
+        self._embed_cache[key] = vec
+        return vec
+
+    def add_memory(self, content: str, topic: str, agent_id: str,
+                   memory_type: str = "episodic") -> str:
+        emb = self._embed(content)
+        mem_id = hashlib.md5(f"{content}{time.time()}".encode()).hexdigest()[:10]
+        entry = MemoryEntry(
+            id=mem_id, content=content, embedding=emb,
+            topic=topic, agent_id=agent_id, timestamp=time.time(),
+            memory_type=memory_type
+        )
+        if memory_type == "episodic":
+            self.episodic.append(entry)
+            self.working_memory.append(mem_id)
+        elif memory_type == "semantic":
+            self.semantic.setdefault(topic, []).append(entry)
+        else:
+            self.procedural[topic] = entry
+        return mem_id
+
+    def _all_entries(self) -> List[MemoryEntry]:
+        out = list(self.episodic)
+        for arr in self.semantic.values():
+            out.extend(arr)
+        out.extend(self.procedural.values())
+        return out
+
+    def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
+        entries = self._all_entries()
+        if not entries:
+            return []
+        q = self._embed(query)
+        mats = np.stack([e.embedding for e in entries], axis=0)  # [N, D]
+        denom = (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
+        sims = mats.dot(q) / denom
+        idxs = np.argsort(-sims)[:k]
+        results = []
+        for i in idxs:
+            e = entries[i]
+            e.access_count += 1
+            results.append(e)
+        return results
+
+    def consolidate(self) -> int:
+        moved = 0
+        keep: List[MemoryEntry] = []
+        for e in self.episodic:
+            if e.access_count >= self.consolidation_threshold:
+                self.semantic.setdefault(e.topic, []).append(
+                    MemoryEntry(
+                        id=f"cons_{e.id}",
+                        content=f"[Consolidated] {e.content}",
+                        embedding=e.embedding,
+                        topic=e.topic,
+                        agent_id=e.agent_id,
+                        timestamp=time.time(),
+                        memory_type="semantic",
+                        metadata={"orig": e.id, "access_count": e.access_count},
+                    )
+                )
+                moved += 1
+            else:
+                keep.append(e)
+        self.episodic = keep
+        return moved
+
+class TCMWithLLMMemoryLite:
+    def __init__(self, agents: List[str], topics: List[str],
+                 chat_model: str = "gpt-4o-mini"):
+        self.client = OpenAI()  # reads OPENAI_API_KEY from env
+        self.chat_model = chat_model
+        self.agents = agents
+        self.topics = topics
+        self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
+        self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
+        self.mem_shared = LLMCoreMemoryLite(self.client)
+        self.metrics = {
+            "delegations": 0, "total": 0, "mems_used": [], "hit_rate": [], "consolidations": 0,
+        }
+
+    def _topic(self, text: str) -> str:
+        t = text.lower()
+        rules = {
+            "planning": ["plan", "roadmap", "strategy", "schedule"],
+            "research": ["research", "investigate", "study", "analyze"],
+            "coding":   ["code", "implement", "bug", "debug", "write python"],
+            "ml":       ["ml", "model", "train", "neural", "classifier"],
+            "nlp":      ["nlp", "transformer", "llm", "token", "text"],
+        }
+        for topic, kws in rules.items():
+            if any(kw in t for kw in kws):
+                return topic
+        return self.topics[0] if self.topics else "general"
+
+    def _expert(self, topic: str) -> str:
+        scores = {}
+        for a in self.agents:
+            p = self.trust[f"{a}:{topic}"]
+            scores[a] = np.random.beta(p["alpha"], p["beta"])
+        return max(scores, key=scores.get)
+
+    def _format_mem(self, mems: List[MemoryEntry]) -> str:
+        if not mems:
+            return "No relevant memories."
+        lines = []
+        for i, m in enumerate(mems[:5], 1):
+            lines.append(f"{i}. ({m.memory_type}) {m.content[:220]}...")
+        return "\n".join(lines)
+
+    def _call_llm(self, prompt: str) -> str:
+        try:
+            r = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7, max_tokens=450,
+            )
+            return r.choices[0].message.content
+        except Exception as e:
+            return f"[LLM error] {e}"
+
+    def _quality(self, response: str, mems: List[MemoryEntry]) -> float:
+        score = 0.5
+        if len(response) > 120: score += 0.2
+        if mems and any(m.content[:60] in response for m in mems): score += 0.3
+        return min(1.0, score)
+
+    def _update_trust(self, agent: str, topic: str, success: bool):
+        k = f"{agent}:{topic}"
+        if success:
+            self.trust[k]["alpha"] += 1
+        else:
+            self.trust[k]["beta"] += 1
+
+    def trust_score(self, agent: str, topic: str) -> float:
+        p = self.trust[f"{agent}:{topic}"]
+        return p["alpha"] / (p["alpha"] + p["beta"])
+
+    def process(self, query: str, requester: Optional[str] = None) -> Dict:
+        self.metrics["total"] += 1
+        topic = self._topic(query)
+        requester = requester or np.random.choice(self.agents)
+        expert = self._expert(topic)
+        delegated = expert != requester
+        if delegated:
+            self.metrics["delegations"] += 1
+
+        local = self.mem_local[expert].retrieve(query, k=3)
+        shared = self.mem_shared.retrieve(query, k=2)
+        used = local + shared
+
+        prompt = f"""You are {expert}, an expert in {topic}.
+Relevant memories:
+{self._format_mem(used)}
+
+User query:
+{query}
+
+Craft a helpful, accurate answer that uses the memories when relevant.
+"""
+        answer = self._call_llm(prompt)
+
+        self.mem_local[expert].add_memory(
+            content=f"Q: {query}\nA: {answer}", topic=topic, agent_id=expert, memory_type="episodic"
+        )
+        q = self._quality(answer, used)
+        self._update_trust(expert, topic, success=(q > 0.7))
+
+        cons_local = self.mem_local[expert].consolidate()
+        cons_shared = self.mem_shared.consolidate()
+        self.metrics["consolidations"] += (cons_local + cons_shared)
+
+        hit = (len(local) / max(1, len(used))) if used else 0.0
+        self.metrics["mems_used"].append(len(used))
+        self.metrics["hit_rate"].append(hit)
+
+        return {
+            "query": query, "response": answer, "topic": topic, "requester": requester,
+            "expert": expert, "delegated": delegated, "memories_used": len(used),
+            "trust_score": self.trust_score(expert, topic),
+        }
+
+    def summary(self) -> Dict:
+        tot = max(1, self.metrics["total"])
+        return {
+            "total_queries": self.metrics["total"],
+            "delegation_rate": self.metrics["delegations"] / tot,
+            "avg_memories_used": float(np.mean(self.metrics["mems_used"])) if self.metrics["mems_used"] else 0.0,
+            "avg_memory_hit_rate": float(np.mean(self.metrics["hit_rate"])) if self.metrics["hit_rate"] else 0.0,
+            "total_consolidations": self.metrics["consolidations"],
+            "trust": {k: v["alpha"] / (v["alpha"] + v["beta"]) for k, v in self.trust.items()},
+        }
+
+# ---------- App UI ----------
+@st.cache_resource(show_spinner=False)
+def get_engine():
     agents = ["researcher", "analyst", "engineer"]
     topics = ["research", "planning", "coding", "ml", "nlp"]
-    sys = TCMWithLLMMemoryLite(agents=agents, topics=topics)
-    # restore from session, if present
-    if "tcm_state" in st.session_state:
-        try:
-            sys.import_state(st.session_state["tcm_state"])
-        except Exception:
-            pass
-    return sys
+    return TCMWithLLMMemoryLite(agents=agents, topics=topics)
 
-if "tcm" not in st.session_state:
-    try:
-        st.session_state.tcm = build_system()
-    except Exception as e:
-        st.error(f"Startup error: {e}")
-        st.stop()
+tcm = get_engine()
 
-tcm = st.session_state.tcm
-
-# --- UI ---
 st.title("🧠 TCM + LLM Core Memory")
-st.caption("Trust-based delegation + memory-augmented reasoning")
+st.caption("Trust-based expert routing + memory-augmented answers")
 
-with st.sidebar:
-    st.subheader("⚙️ Controls")
-    if st.button("Seed shared knowledge"):
-        seeds = [
-            ("Transformers use self-attention to weigh token-token interactions.", "nlp", "seed"),
-            ("Basic ML project plan: data → features → model → eval → iterate.", "planning", "seed"),
-            ("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "seed"),
-        ]
-        for text, topic, who in seeds:
-            tcm.mem_shared.add_memory(content=text, topic=topic, agent_id=who, memory_type="semantic")
-        st.success("Seeded 3 entries into shared memory.")
-        st.session_state["tcm_state"] = tcm.export_state()
+left, right = st.columns([3, 2])
 
-    if st.button("Reset session state"):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
+with left:
+    st.subheader("Ask")
+    q = st.text_area("Your question", placeholder="e.g., Plan an MVP rollout for a chatbot", height=110)
+    c1, c2 = st.columns(2)
+    if c1.button("Seed demo memories"):
+        tcm.mem_shared.add_memory("Transformers use self-attention to weigh token-token interactions.", "nlp", "seed", "semantic")
+        tcm.mem_shared.add_memory("Basic ML project plan: data → features → model → eval → iterate.", "planning", "seed", "semantic")
+        tcm.mem_shared.add_memory("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "seed", "semantic")
+        st.success("Seeded shared semantic memory.")
+    if c2.button("Ask") and q.strip():
+        out = tcm.process(q.strip())
+        st.write(f"**Expert:** `{out['expert']}` | **Topic:** `{out['topic']}` | **Delegated:** {out['delegated']} | **Memories:** {out['memories_used']} | **Trust:** {out['trust_score']:.3f}")
+        st.markdown("**Answer**")
+        st.write(out["response"])
 
-    st.markdown("---")
-    st.subheader("Trust (mean of Beta)")
-    trust = tcm.summary().get("trust", {})
-    if not trust:
-        st.caption("no trust yet")
-    else:
-        for k,v in trust.items():
-            st.write(f"{k}: **{v:.3f}**")
+with right:
+    st.subheader("Metrics")
+    st.json(tcm.summary())
 
-st.markdown("### Ask something")
-q = st.text_area("Your question (natural language)", height=120, placeholder="e.g., Plan an MVP rollout for a chatbot")
-
-col1, col2 = st.columns([1,1])
-with col1:
-    ask = st.button("Ask", type="primary")
-with col2:
-    show_summary = st.button("Show metrics")
-
-if ask and q.strip():
-    out = tcm.process(q.strip())
-    st.markdown("#### Response")
-    st.write(out["response"])
-    st.info(f"Expert: {out['expert']}  •  Topic: {out['topic']}  •  Delegated: {out['delegated']}  •  Memories used: {out['memories_used']}  •  Trust: {out['trust_score']:.3f}")
-    st.session_state["tcm_state"] = tcm.export_state()
-
-if show_summary:
-    st.markdown("#### Metrics")
-    s = tcm.summary()
-    st.json(s)
+st.divider()
+st.caption("Set `OPENAI_API_KEY` in Settings → Secrets.")
