@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-# Orchestrix — TCM + LLM Core Memory
+"""
+Orchestrix — TCM + LLM Core Memory
+"""
 
-import os, time, hashlib, random
+import os
+import time
+import hashlib
+import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from collections import defaultdict, deque
@@ -11,485 +16,327 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from openai import OpenAI
 import streamlit as st
 
-# ---------------- Page / Theme ----------------
-st.set_page_config(page_title="Orchestrix", layout="wide")
+# ---------------- Page Configuration ----------------
+st.set_page_config(
+    page_title="Orchestrix - AI Agent Orchestration", 
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
+# ---------------- CSS Styling ----------------
 def inject_css():
     st.markdown("""
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
       
-      /* Global font and text visibility fixes */
+      /* Global Reset and Font */
       * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
       }
       
-      /* Modern gradient background */
-      [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0f0f0f 100%);
+      /* Main App Container */
+      .stApp {
+        background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1f 100%);
+        color: #ffffff;
       }
       
-      [data-testid="stHeader"] { 
-        background: transparent;
-        backdrop-filter: blur(10px);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      }
-
-      /* FIXED: Enhanced color palette for maximum visibility */
+      /* Hide Streamlit Branding */
+      #MainMenu {visibility: hidden;}
+      footer {visibility: hidden;}
+      header {visibility: hidden;}
+      
+      /* Custom Variables */
       :root {
-        --background: #0a0a0a;
-        --surface: rgba(255, 255, 255, 0.06);
-        --surface-hover: rgba(255, 255, 255, 0.09);
-        --border: rgba(255, 255, 255, 0.15);
-        --border-hover: rgba(255, 255, 255, 0.25);
-        
-        /* CRITICAL FIX: Brighter text colors */
+        --bg-primary: #0a0a0a;
+        --bg-secondary: #141418;
+        --bg-card: rgba(255, 255, 255, 0.05);
+        --border: rgba(255, 255, 255, 0.1);
         --text-primary: #ffffff;
-        --text-secondary: #b8bcc4;
-        --text-muted: #9ca3af;
-        
-        /* Vibrant accent colors */
-        --accent-blue: #60a5fa;
-        --accent-green: #34d399;
-        --accent-purple: #a78bfa;
-        --accent-amber: #fbbf24;
-        --accent-red: #f87171;
-        
-        /* Premium gradients */
-        --gradient-brand: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        --gradient-success: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-        --gradient-danger: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
-      }
-
-      /* Brand header with animation */
-      .brandwrap { 
-        display: flex; 
-        align-items: center; 
-        justify-content: center; 
-        padding: 32px 0 24px; 
-        margin-bottom: 24px;
+        --text-secondary: #a0a0a0;
+        --text-muted: #707070;
+        --accent-purple: #8b5cf6;
+        --accent-blue: #3b82f6;
+        --accent-green: #10b981;
+        --accent-amber: #f59e0b;
+        --accent-red: #ef4444;
       }
       
-      .logotype {
+      /* Logo and Header */
+      .brand-container {
+        text-align: center;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+      }
+      
+      .logo {
+        font-size: 3rem;
         font-weight: 800;
-        font-size: 48px;
-        letter-spacing: -1.5px;
-        background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 25%, #f472b6 50%, #fbbf24 75%, #34d399 100%);
+        letter-spacing: -2px;
+        background: linear-gradient(90deg, #8b5cf6 0%, #3b82f6 50%, #10b981 100%);
         -webkit-background-clip: text;
-        background-clip: text;
         -webkit-text-fill-color: transparent;
-        background-size: 200% 200%;
-        animation: gradient-shift 6s ease infinite;
-        filter: drop-shadow(0 10px 30px rgba(139, 92, 246, 0.3));
+        background-clip: text;
+        margin-bottom: 0.5rem;
       }
       
-      @keyframes gradient-shift {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-      }
-      
-      .tag { 
-        text-align: center; 
+      .tagline {
         color: var(--text-secondary);
-        font-size: 16px;
-        margin-top: 8px;
-        letter-spacing: 0.5px;
+        font-size: 1rem;
         font-weight: 500;
       }
-
-      /* Glass morphism cards */
-      .shell {
-        background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        padding: 24px;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        box-shadow: 
-          0 8px 32px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      }
       
-      .shell:hover {
-        background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
-        border-color: var(--border-hover);
-        transform: translateY(-2px);
-        box-shadow: 
-          0 12px 48px rgba(0, 0, 0, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.15);
-      }
-      
-      .shell.soft { 
-        background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
-      }
-
-      /* Disclaimer with better visibility */
-      .disclaimer {
-        background: linear-gradient(135deg, rgba(96, 165, 250, 0.15) 0%, rgba(167, 139, 250, 0.15) 100%);
-        border: 1px solid rgba(167, 139, 250, 0.4);
-        border-radius: 12px;
-        padding: 18px;
-        color: var(--text-primary);
-        margin-bottom: 24px;
-        font-size: 14px;
-        line-height: 1.7;
-        font-weight: 400;
-      }
-
-      /* Metrics grid */
-      .grid { 
-        display: grid; 
-        gap: 20px; 
-        grid-template-columns: 1fr;
-        margin-bottom: 24px;
-      }
-
-      /* Metric chips with gradient borders */
-      .chip {
-        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      /* Card Component */
+      .card {
+        background: var(--bg-card);
         border: 1px solid var(--border);
         border-radius: 12px;
-        padding: 24px;
-        position: relative;
-        overflow: hidden;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        backdrop-filter: blur(10px);
         transition: all 0.3s ease;
-        transform: translateY(0);
-        opacity: 1;
       }
       
-      .chip::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background: var(--gradient-brand);
-        opacity: 0;
-        transition: opacity 0.3s ease;
+      .card:hover {
+        background: rgba(255, 255, 255, 0.07);
+        border-color: rgba(255, 255, 255, 0.15);
+        transform: translateY(-2px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
       }
       
-      .chip:hover {
-        background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
-        border-color: var(--border-hover);
-        transform: translateY(-2px) scale(1.02);
-      }
-      
-      .chip:hover::before {
-        opacity: 1;
-      }
-      
-      .chip .label { 
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 1.2px;
-        text-transform: uppercase;
-        margin-bottom: 12px;
-        opacity: 0.9;
-      }
-      
-      .chip .value { 
+      /* Disclaimer Box */
+      .disclaimer {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+        border: 1px solid rgba(139, 92, 246, 0.3);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
         color: var(--text-primary);
-        font-size: 36px;
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+      
+      /* Metrics */
+      .metric-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        transition: all 0.3s ease;
+      }
+      
+      .metric-label {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 0.5rem;
+      }
+      
+      .metric-value {
+        color: var(--text-primary);
+        font-size: 2rem;
         font-weight: 700;
-        letter-spacing: -1px;
         line-height: 1;
       }
-
-      /* Status badges */
-      .status { 
-        display: flex; 
-        gap: 10px; 
-        align-items: center; 
-        flex-wrap: wrap;
-        margin: 20px 0;
-      }
       
+      /* Status Badges */
       .badge {
-        display: inline-flex;
-        align-items: center;
-        padding: 8px 14px;
+        display: inline-block;
+        padding: 0.375rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+      
+      .badge-success {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+      }
+      
+      .badge-danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+      
+      .badge-info {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+      }
+      
+      .badge-warning {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+      }
+      
+      /* Agent Cards */
+      .agent-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
         border-radius: 8px;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.3px;
-        transition: all 0.2s ease;
-        border: 1px solid transparent;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+      }
+      
+      .agent-name {
         color: var(--text-primary);
-        background: rgba(255, 255, 255, 0.05);
-      }
-      
-      .badge:hover {
-        transform: translateY(-1px);
-        background: rgba(255, 255, 255, 0.08);
-      }
-      
-      .badge-topic { 
-        background: linear-gradient(135deg, rgba(96, 165, 250, 0.15), rgba(96, 165, 250, 0.10));
-        color: #93bbfc;
-        border: 1px solid rgba(96, 165, 250, 0.3);
-      }
-      
-      .badge-mem { 
-        background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(251, 191, 36, 0.10));
-        color: #fcd34d;
-        border: 1px solid rgba(251, 191, 36, 0.3);
-      }
-      
-      .delegation.ok { 
-        background: var(--gradient-success);
-        color: white;
         font-weight: 600;
-        border: none;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        margin-bottom: 0.5rem;
       }
       
-      .delegation.bad { 
-        background: var(--gradient-danger);
-        color: white;
-        font-weight: 600;
-        border: none;
-        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+      .trust-bar {
+        height: 6px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 0.5rem 0;
       }
-
-      /* Answer boxes */
-      .answer {
+      
+      .trust-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #10b981 100%);
+        transition: width 0.5s ease;
+      }
+      
+      /* Answer Box */
+      .answer-box {
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 24px;
+        border-radius: 8px;
+        padding: 1.25rem;
         color: var(--text-primary);
-        font-size: 15px;
-        line-height: 1.8;
-        margin-top: 16px;
+        line-height: 1.6;
+        margin-top: 1rem;
       }
       
-      .answer p {
-        color: var(--text-primary) !important;
-      }
-
-      /* Agent cards */
-      .agent {
-        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 18px;
-        margin-bottom: 14px;
-        transition: all 0.3s ease;
-      }
-      
-      .agent:hover {
-        background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.05));
-        border-color: var(--border-hover);
-        transform: translateX(4px);
-      }
-      
-      .agent .name { 
-        color: var(--text-primary);
-        font-weight: 600;
-        font-size: 15px;
-        margin-bottom: 10px;
-      }
-      
-      /* Progress bars */
-      .bar { 
-        width: 100%;
-        height: 8px;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 4px;
-        overflow: hidden;
-        margin: 10px 0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      }
-      
-      .bar > span {
-        display: block;
-        height: 100%;
-        background: linear-gradient(90deg, #ef4444 0%, #fbbf24 33%, #34d399 66%, #10b981 100%);
-        border-radius: 3px;
-        transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
-      }
-
-      .hint { 
-        color: var(--text-muted);
-        font-size: 13px;
-        margin-top: 10px;
-        line-height: 1.5;
-      }
-
-      /* Routing overlay */
-      .overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0, 0, 0, 0.85);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-      }
-      
-      .routebox {
-        background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05));
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 16px;
-        padding: 36px;
-        max-width: 500px;
-        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
-      }
-      
-      .routebox > div:first-child {
-        color: var(--text-primary);
-        font-size: 20px;
-        font-weight: 600;
-        margin-bottom: 14px;
-      }
-      
-      .small { 
-        color: var(--text-secondary);
-        font-size: 14px;
-        line-height: 1.7;
-      }
-
-      /* Section titles */
-      .sectiontitle {
-        color: var(--text-primary);
-        font-weight: 600;
-        font-size: 17px;
-        margin-bottom: 14px;
-      }
-      
-      /* Fix ALL Streamlit text elements */
-      h1, h2, h3, h4, h5, h6 {
-        color: var(--text-primary) !important;
-      }
-      
-      p, span, div, label, .st-emotion-cache-10trblm {
-        color: var(--text-secondary) !important;
-      }
-      
-      /* Streamlit specific fixes */
+      /* Input Area */
       .stTextArea textarea {
-        background: rgba(255, 255, 255, 0.06) !important;
-        border: 1px solid var(--border) !important;
-        color: var(--text-primary) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #ffffff !important;
         font-size: 14px !important;
-        font-family: 'Inter', sans-serif !important;
       }
       
       .stTextArea textarea:focus {
         border-color: var(--accent-purple) !important;
-        box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2) !important;
-        background: rgba(255, 255, 255, 0.08) !important;
+        box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2) !important;
       }
       
-      .stTextArea textarea::placeholder {
-        color: var(--text-muted) !important;
-      }
-      
-      .stButton button {
-        background: var(--gradient-brand);
+      /* Buttons */
+      .stButton > button {
+        background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
         color: white !important;
         border: none;
-        border-radius: 8px;
-        padding: 10px 20px;
+        border-radius: 6px;
+        padding: 0.5rem 1rem;
         font-weight: 600;
-        font-size: 14px;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 14px rgba(102, 126, 234, 0.3);
       }
       
-      .stButton button:hover {
+      .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 5px 15px rgba(139, 92, 246, 0.3);
       }
       
-      /* Checkbox styling */
-      .stCheckbox {
+      /* Fix Text Colors */
+      h1, h2, h3, h4, h5, h6 {
+        color: var(--text-primary) !important;
+      }
+      
+      p, span, div, label {
         color: var(--text-secondary) !important;
       }
       
-      .stCheckbox > label {
-        color: var(--text-secondary) !important;
+      .st-emotion-cache-16idsys p {
+        color: var(--text-primary) !important;
       }
       
-      /* Expander styling */
+      /* Expander */
       .streamlit-expanderHeader {
-        color: var(--text-primary) !important;
-        background: rgba(255, 255, 255, 0.05) !important;
-        border-radius: 8px;
-      }
-      
-      .streamlit-expanderHeader:hover {
-        background: rgba(255, 255, 255, 0.08) !important;
-      }
-      
-      /* Info messages */
-      .stAlert {
-        background: linear-gradient(135deg, rgba(96, 165, 250, 0.1), rgba(167, 139, 250, 0.1));
-        border: 1px solid rgba(96, 165, 250, 0.3);
-        color: var(--text-primary);
-      }
-      
-      /* Sidebar */
-      section[data-testid="stSidebar"] {
-        background: rgba(255, 255, 255, 0.03);
-        border-right: 1px solid var(--border);
-      }
-      
-      section[data-testid="stSidebar"] .stTextInput input {
-        background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid var(--border) !important;
+        background: var(--bg-card) !important;
         color: var(--text-primary) !important;
       }
       
-      /* Animations */
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
+      /* Checkbox */
+      .stCheckbox label {
+        color: var(--text-secondary) !important;
       }
       
-      .shell, .chip, .agent {
-        animation: fadeIn 0.5s ease;
+      /* Loading Overlay */
+      .overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.8);
+        backdrop-filter: blur(5px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
       }
       
-      /* Ensure all text is visible */
-      .stMarkdown {
-        color: var(--text-primary) !important;
-      }
-      
-      /* Column gaps */
-      .row-widget.stHorizontal {
-        gap: 20px;
+      .overlay-content {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        max-width: 400px;
       }
     </style>
     """, unsafe_allow_html=True)
 
 inject_css()
 
-# ---------------- API key helper ----------------
-def require_api_key():
-    key = st.secrets.get("OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-    if key:
-        os.environ["OPENAI_API_KEY"] = key.strip()
-        return
+# ---------------- API Key Management ----------------
+def init_openai():
+    """Initialize OpenAI API key from Streamlit secrets or environment"""
+    api_key = None
+    
+    # Try Streamlit secrets first
+    if hasattr(st, 'secrets') and 'OPENAI_API_KEY' in st.secrets:
+        api_key = st.secrets['OPENAI_API_KEY']
+    # Then environment variable
+    elif 'OPENAI_API_KEY' in os.environ:
+        api_key = os.environ['OPENAI_API_KEY']
+    
+    if api_key:
+        os.environ['OPENAI_API_KEY'] = api_key
+        return True
+    
+    # Show sidebar input if no key found
     with st.sidebar:
-        st.write("🔑 OpenAI API Key")
-        val = st.text_input("Enter key", type="password", placeholder="sk-...", help="Used to call the model for answers and embeddings.")
-        if val:
-            os.environ["OPENAI_API_KEY"] = val.strip()
-            st.success("✅ Saved for this session.")
+        st.markdown("### 🔑 OpenAI API Key Required")
+        user_key = st.text_input(
+            "Enter your OpenAI API key:",
+            type="password",
+            placeholder="sk-...",
+            help="Your API key is needed to power the AI agents"
+        )
+        if user_key:
+            os.environ['OPENAI_API_KEY'] = user_key
+            st.success("✅ API key saved for this session")
+            return True
         else:
-            st.warning("⚠️ Please enter your OpenAI API key to continue.")
+            st.error("⚠️ Please enter your OpenAI API key to continue")
             st.stop()
+    return False
 
-require_api_key()
+# Initialize API
+init_openai()
 
-# ---------------- Engine (in-file) ----------------
+# ---------------- Core Classes ----------------
 @dataclass
 class MemoryEntry:
     id: str
@@ -499,10 +346,10 @@ class MemoryEntry:
     agent_id: str
     timestamp: float
     access_count: int = 0
-    memory_type: str = "episodic"  # episodic | semantic | procedural
+    memory_type: str = "episodic"
     metadata: Dict = field(default_factory=dict)
 
-class LLMCoreMemoryLite:
+class LLMCoreMemory:
     def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
         self.client = client
         self.embed_model = embed_model
@@ -523,8 +370,7 @@ class LLMCoreMemoryLite:
         self._embed_cache[key] = vec
         return vec
 
-    def add_memory(self, content: str, topic: str, agent_id: str,
-                   memory_type: str = "episodic") -> str:
+    def add_memory(self, content: str, topic: str, agent_id: str, memory_type: str = "episodic") -> str:
         emb = self._embed(content)
         mem_id = hashlib.md5(f"{content}{time.time()}".encode()).hexdigest()[:10]
         entry = MemoryEntry(
@@ -542,11 +388,11 @@ class LLMCoreMemoryLite:
         return mem_id
 
     def _all_entries(self) -> List[MemoryEntry]:
-        out = list(self.episodic)
+        entries = list(self.episodic)
         for arr in self.semantic.values():
-            out.extend(arr)
-        out.extend(self.procedural.values())
-        return out
+            entries.extend(arr)
+        entries.extend(self.procedural.values())
+        return entries
 
     def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
         entries = self._all_entries()
@@ -556,16 +402,11 @@ class LLMCoreMemoryLite:
         mats = np.stack([e.embedding for e in entries], axis=0)
         sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
         idxs = np.argsort(-sims)[:k]
-        results = []
-        for i in idxs:
-            e = entries[i]
-            e.access_count += 1
-            results.append(e)
-        return results
+        return [entries[i] for i in idxs]
 
     def consolidate(self) -> int:
         moved = 0
-        keep: List[MemoryEntry] = []
+        keep = []
         for e in self.episodic:
             if e.access_count >= self.consolidation_threshold:
                 self.semantic.setdefault(e.topic, []).append(
@@ -576,8 +417,7 @@ class LLMCoreMemoryLite:
                         topic=e.topic,
                         agent_id=e.agent_id,
                         timestamp=time.time(),
-                        memory_type="semantic",
-                        metadata={"orig": e.id, "access_count": e.access_count},
+                        memory_type="semantic"
                     )
                 )
                 moved += 1
@@ -586,358 +426,389 @@ class LLMCoreMemoryLite:
         self.episodic = keep
         return moved
 
-class TCMWithLLMMemoryLite:
-    def __init__(self, agents: List[str], topics: List[str],
-                 chat_model: str = "gpt-4o-mini"):
+class TCMWithLLMMemory:
+    def __init__(self, agents: List[str], topics: List[str], chat_model: str = "gpt-4o-mini"):
         self.client = OpenAI()
         self.chat_model = chat_model
         self.agents = agents
         self.topics = topics
         self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
-        self.mem_local = {a: LLMCoreMemoryLite(self.client) for a in agents}
-        self.mem_shared = LLMCoreMemoryLite(self.client)
-        self.metrics = {"delegations": 0, "total": 0, "mems_used": [], "hit_rate": [], "consolidations": 0}
+        self.mem_local = {a: LLMCoreMemory(self.client) for a in agents}
+        self.mem_shared = LLMCoreMemory(self.client)
+        self.metrics = {
+            "delegations": 0,
+            "total": 0,
+            "mems_used": [],
+            "hit_rate": [],
+            "consolidations": 0
+        }
 
     def _topic(self, text: str) -> str:
-        t = text.lower()
+        text_lower = text.lower()
         rules = {
             "planning": ["plan", "roadmap", "strategy", "schedule"],
             "research": ["research", "investigate", "study", "analyze"],
-            "coding":   ["code", "implement", "bug", "debug", "write python"],
-            "ml":       ["ml", "model", "train", "neural", "classifier"],
-            "nlp":      ["nlp", "transformer", "llm", "token", "text"],
+            "coding": ["code", "implement", "bug", "debug", "python"],
+            "ml": ["ml", "model", "train", "neural", "classifier"],
+            "nlp": ["nlp", "transformer", "llm", "token", "text"]
         }
-        for topic, kws in rules.items():
-            if any(kw in t for kw in kws): return topic
+        for topic, keywords in rules.items():
+            if any(kw in text_lower for kw in keywords):
+                return topic
         return self.topics[0] if self.topics else "general"
 
     def thompson_draws(self, topic: str, seed: Optional[int] = None) -> Dict[str, float]:
-        if seed is not None: np.random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed)
         draws = {}
-        for a in self.agents:
-            p = self.trust[f"{a}:{topic}"]
-            draws[a] = float(np.random.beta(p["alpha"], p["beta"]))
+        for agent in self.agents:
+            params = self.trust[f"{agent}:{topic}"]
+            draws[agent] = float(np.random.beta(params["alpha"], params["beta"]))
         return draws
 
     def _expert(self, topic: str) -> str:
         scores = self.thompson_draws(topic)
         return max(scores, key=scores.get)
 
-    def _format_mem(self, mems: List[MemoryEntry]) -> str:
-        if not mems: return "No relevant memories."
-        return "\n".join([f"{i}. ({m.memory_type}) {m.content[:220]}..." for i, m in enumerate(mems[:5], 1)])
+    def _format_memories(self, mems: List[MemoryEntry]) -> str:
+        if not mems:
+            return "No relevant memories."
+        return "\n".join([f"{i}. ({m.memory_type}) {m.content[:200]}..." 
+                         for i, m in enumerate(mems[:5], 1)])
 
     def _call_llm(self, prompt: str) -> str:
         try:
-            r = self.client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model=self.chat_model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7, max_tokens=500,
+                temperature=0.7,
+                max_tokens=500
             )
-            return r.choices[0].message.content
+            return response.choices[0].message.content
         except Exception as e:
-            return f"[LLM error] {e}"
+            return f"Error: {str(e)}"
 
-    def _quality(self, response: str, mems: List[MemoryEntry]) -> float:
+    def _quality_score(self, response: str, memories: List[MemoryEntry]) -> float:
         score = 0.5
-        if len(response) > 120: score += 0.2
-        if mems and any(m.content[:60] in response for m in mems): score += 0.3
+        if len(response) > 120:
+            score += 0.2
+        if memories and any(m.content[:60] in response for m in memories):
+            score += 0.3
         return min(1.0, score)
 
     def _update_trust(self, agent: str, topic: str, success: bool):
-        k = f"{agent}:{topic}"
-        if success: self.trust[k]["alpha"] += 1
-        else:        self.trust[k]["beta"]  += 1
+        key = f"{agent}:{topic}"
+        if success:
+            self.trust[key]["alpha"] += 1
+        else:
+            self.trust[key]["beta"] += 1
 
     def trust_score(self, agent: str, topic: str) -> float:
-        p = self.trust[f"{agent}:{topic}"]
-        return p["alpha"] / (p["alpha"] + p["beta"])
+        params = self.trust[f"{agent}:{topic}"]
+        return params["alpha"] / (params["alpha"] + params["beta"])
 
     def process(self, query: str, requester: Optional[str] = None) -> Dict:
         self.metrics["total"] += 1
         topic = self._topic(query)
         requester = requester or random.choice(self.agents)
         expert = self._expert(topic)
-        delegated = expert != requester
-        if delegated: self.metrics["delegations"] += 1
+        delegated = (expert != requester)
+        
+        if delegated:
+            self.metrics["delegations"] += 1
 
-        local = self.mem_local[expert].retrieve(query, k=3)
-        shared = self.mem_shared.retrieve(query, k=2)
-        used = local + shared
+        # Retrieve memories
+        local_mems = self.mem_local[expert].retrieve(query, k=3)
+        shared_mems = self.mem_shared.retrieve(query, k=2)
+        all_memories = local_mems + shared_mems
 
+        # Generate response
         prompt = f"""You are {expert}, an expert in {topic}.
+        
 Relevant memories:
-{self._format_mem(used)}
+{self._format_memories(all_memories)}
 
-User query:
-{query}
+User query: {query}
 
-Craft a helpful, accurate answer that uses the memories when relevant.
-"""
+Provide a helpful, accurate answer using the memories when relevant."""
+
         answer = self._call_llm(prompt)
 
+        # Store new memory
         self.mem_local[expert].add_memory(
             content=f"Q: {query}\nA: {answer}",
-            topic=topic, agent_id=expert, memory_type="episodic"
+            topic=topic,
+            agent_id=expert,
+            memory_type="episodic"
         )
 
-        q_score = self._quality(answer, used)
-        self._update_trust(expert, topic, success=(q_score > 0.7))
+        # Update trust based on quality
+        quality = self._quality_score(answer, all_memories)
+        self._update_trust(expert, topic, success=(quality > 0.7))
 
+        # Consolidate memories
         self.metrics["consolidations"] += self.mem_local[expert].consolidate()
         self.metrics["consolidations"] += self.mem_shared.consolidate()
 
-        hit = (len(local) / max(1, len(used))) if used else 0.0
-        self.metrics["mems_used"].append(len(used))
-        self.metrics["hit_rate"].append(hit)
+        # Update metrics
+        self.metrics["mems_used"].append(len(all_memories))
+        hit_rate = (len(local_mems) / max(1, len(all_memories))) if all_memories else 0.0
+        self.metrics["hit_rate"].append(hit_rate)
 
         return {
-            "query": query, "response": answer, "topic": topic, "requester": requester,
-            "expert": expert, "delegated": delegated, "memories_used": len(used),
+            "query": query,
+            "response": answer,
+            "topic": topic,
+            "requester": requester,
+            "expert": expert,
+            "delegated": delegated,
+            "memories_used": len(all_memories),
             "trust_score": self.trust_score(expert, topic),
-            "mem_snippets": [m.content for m in used]
+            "mem_snippets": [m.content for m in all_memories]
         }
 
-# Baseline (no routing, no memory) — for comparison
 class DirectModel:
+    """Baseline model without routing or memory"""
     def __init__(self, chat_model: str = "gpt-4o-mini"):
         self.client = OpenAI()
         self.chat_model = chat_model
-    def answer(self, q: str) -> str:
-        try:
-            r = self.client.chat.completions.create(
-                model=self.chat_model,
-                messages=[{"role":"user","content":q}],
-                temperature=0.7, max_tokens=500
-            )
-            return r.choices[0].message.content
-        except Exception as e:
-            return f"[LLM error] {e}"
 
-# ---------------- Engine cache ----------------
+    def answer(self, query: str) -> str:
+        try:
+            response = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[{"role": "user", "content": query}],
+                temperature=0.7,
+                max_tokens=500
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+# ---------------- Initialize Models ----------------
 @st.cache_resource(show_spinner=False)
-def get_engine():
-    return TCMWithLLMMemoryLite(
+def get_tcm_engine():
+    return TCMWithLLMMemory(
         agents=["researcher", "analyst", "engineer"],
         topics=["research", "planning", "coding", "ml", "nlp"]
     )
 
 @st.cache_resource(show_spinner=False)
-def get_direct():
+def get_direct_model():
     return DirectModel()
 
-tcm = get_engine()
-direct = get_direct()
+tcm = get_tcm_engine()
+direct = get_direct_model()
 
-# ---------------- Header ----------------
-st.markdown('<div class="brandwrap"><h1 class="logotype">Orchestrix</h1></div>', unsafe_allow_html=True)
-st.markdown('<div class="tag">Think Better. Orchestrate Smarter.</div>', unsafe_allow_html=True)
+# ---------------- UI Components ----------------
+# Header
+st.markdown("""
+<div class="brand-container">
+    <h1 class="logo">Orchestrix</h1>
+    <p class="tagline">Think Better. Orchestrate Smarter.</p>
+</div>
+""", unsafe_allow_html=True)
 
-# ---------------- Disclaimer ----------------
-if "hide_disc" not in st.session_state:
-    st.session_state.hide_disc = False
-if not st.session_state.hide_disc:
-    st.markdown(
-        '<div class="disclaimer">🎯 This system learns which agent to trust for each topic over time. '
-        'Early answers may route to a less-suited agent. As you interact, the trust distribution adapts '
-        '(Thompson sampling over Beta priors) and routing improves.</div>',
-        unsafe_allow_html=True
-    )
-    if st.checkbox("I understand — hide this notice from now on", value=False):
-        st.session_state.hide_disc = True
+# Disclaimer
+if "hide_disclaimer" not in st.session_state:
+    st.session_state.hide_disclaimer = False
 
-st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+if not st.session_state.hide_disclaimer:
+    st.markdown("""
+    <div class="disclaimer">
+        <strong>How it works:</strong> This system learns which agent to trust for each topic over time. 
+        Early answers may route to less-optimal agents, but the system improves through Thompson Sampling 
+        with Beta-Bernoulli trust models.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if st.checkbox("Hide this notice"):
+        st.session_state.hide_disclaimer = True
 
-# ---------------- Layout ----------------
-left, right = st.columns([7, 5], gap="large")
+# Main Layout
+col_left, col_right = st.columns([7, 5], gap="large")
 
-# Left: question → routing → answers
-with left:
-    st.markdown('<div class="shell qbox">', unsafe_allow_html=True)
-
-    # Clean, catchy title (no Streamlit default label)
-    st.markdown('<div class="sectiontitle">💡 What should we tackle?</div>', unsafe_allow_html=True)
-
-    # Single textarea (label collapsed so nothing extra shows above it)
-    q = st.text_area(
-        label="",
-        placeholder="Describe the outcome you want… e.g., "Plan an MVP rollout for a chatbot."",
+# Left Column - Query Interface
+with col_left:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    
+    st.markdown("### 💬 What can I help you with?")
+    
+    query = st.text_area(
+        label="Query",
+        placeholder="Example: Plan an MVP rollout for a chatbot application",
         height=120,
         label_visibility="collapsed"
     )
-
-    c1, c2, c3 = st.columns([1,1,2])
-    with c1:
-        load_demo = st.button(
-            "📚 Load sample",
-            help="Adds a few generic facts (planning, NLP, cosine similarity) so you can see memory retrieval right away."
+    
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        load_sample = st.button("📚 Load Sample", help="Load sample knowledge into memory")
+    with col2:
+        run_query = st.button("🚀 Ask", help="Process your query", type="primary")
+    with col3:
+        compare_baseline = st.checkbox("Compare with baseline", value=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Load sample memories
+    if load_sample:
+        tcm.mem_shared.add_memory(
+            "Transformers use self-attention mechanisms to weigh token relationships.",
+            "nlp", "demo", "semantic"
         )
-    with c2:
-        run = st.button("🚀 Ask", help="Route to the best expert and answer with supporting memories.")
-    with c3:
-        compare = st.checkbox("Compare with direct model", value=True,
-                               help="Also show an answer straight from the model without routing or memory.")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if load_demo:
-        tcm.mem_shared.add_memory("Transformers weigh token-token interactions via self-attention.", "nlp", "demo", "semantic")
-        tcm.mem_shared.add_memory("ML project: data → features → model → eval → iterate.", "planning", "demo", "semantic")
-        tcm.mem_shared.add_memory("Cosine similarity is dot(a,b)/(|a||b|).", "coding", "demo", "semantic")
-        st.info("✅ Sample knowledge loaded. Ask a question to see memory-augmented routing.")
-
-    # Routing overlay + answer
-    if run and q.strip():
-        topic_preview = tcm._topic(q.strip())
-        seed = int(time.time() * 1e6) & 0xffffffff
-        _ = tcm.thompson_draws(topic_preview, seed=seed)  # preview draw for consistency
-
-        # Friendly overlay (no raw numbers by default)
-        overlay = st.empty()
-        overlay.markdown(f"""
-        <div class="overlay">
-          <div class="routebox shell">
-            <div style="font-weight:700; font-size:18px; margin-bottom:8px; color: #ffffff;">
-              🔍 Finding the best expert for <span style="color:#a78bfa">{topic_preview}</span>
-            </div>
-            <div class="small">Understanding your question → matching topic & context → checking recent reliability → selecting the best fit…</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        time.sleep(1.0)
-
-        requester = random.choice(tcm.agents)
-        np.random.seed(seed)    # match preview selection
-        out = tcm.process(q.strip(), requester=requester)
-        overlay.empty()
-        st.session_state.last = out
-
-        # Optional baseline comparison
-        if compare:
-            st.session_state.baseline = direct.answer(q.strip())
-        else:
-            st.session_state.baseline = None
-
-    # Render results
-    if "last" in st.session_state:
-        out = st.session_state.last
-        delegated = bool(out["delegated"])
-        cls = "delegation ok" if delegated else "delegation bad"
-        txt = "✅ Delegated to trusted expert" if delegated else "⚡ Handled by initial agent"
-
-        # Routing card (plain-English)
-        st.markdown('<div class="shell" style="margin-top:14px">', unsafe_allow_html=True)
+        tcm.mem_shared.add_memory(
+            "ML pipeline: data collection → preprocessing → model training → evaluation → deployment.",
+            "planning", "demo", "semantic"
+        )
+        tcm.mem_shared.add_memory(
+            "Cosine similarity formula: cos(θ) = (A·B)/(||A||×||B||)",
+            "coding", "demo", "semantic"
+        )
+        st.success("✅ Sample knowledge loaded successfully!")
+    
+    # Process query
+    if run_query and query.strip():
+        with st.spinner("Processing..."):
+            # Process with TCM
+            result = tcm.process(query.strip())
+            st.session_state.last_result = result
+            
+            # Process with baseline if requested
+            if compare_baseline:
+                baseline_answer = direct.answer(query.strip())
+                st.session_state.baseline_answer = baseline_answer
+            else:
+                st.session_state.baseline_answer = None
+    
+    # Display results
+    if "last_result" in st.session_state:
+        result = st.session_state.last_result
+        
+        # Status badges
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        
+        delegated = result["delegated"]
+        badge_class = "badge-success" if delegated else "badge-warning"
+        badge_text = "✅ Delegated to Expert" if delegated else "⚡ Direct Processing"
+        
         st.markdown(f"""
-        <div class="status">
-          <span class="badge {cls}">{txt}</span>
-          <span class="badge badge-topic">📂 Topic: {out['topic']}</span>
-          <span class="badge badge-mem">🧠 Memories: {out['memories_used']}</span>
-          <span class="badge">👤 Expert: {out['expert']}</span>
-          <span class="badge">📊 Trust: {out['trust_score']:.3f}</span>
-        </div>
-        <div class="hint" style="margin-top:8px;">
-          Why this differs from a normal chat: Orchestrix routes by learned trust per topic and
-          pulls prior knowledge from memory before answering.
-        </div>
+        <span class="{badge_class} badge">{badge_text}</span>
+        <span class="badge badge-info">Topic: {result['topic']}</span>
+        <span class="badge badge-info">Expert: {result['expert']}</span>
+        <span class="badge badge-warning">Memories: {result['memories_used']}</span>
+        <span class="badge badge-info">Trust: {result['trust_score']:.2f}</span>
         """, unsafe_allow_html=True)
-
-        # Answer(s)
-        if st.session_state.get("baseline") and compare:
-            colA, colB = st.columns(2)
-        else:
-            colA = st.columns(1)[0]; colB = None
-
-        with colA:
-            st.subheader("🎯 Orchestrix answer")
-            st.markdown('<div class="answer">', unsafe_allow_html=True)
-            st.write(out["response"])
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            # Memory reveal
-            with st.expander("📝 Show the memory snippets used"):
-                if out["memories_used"] == 0:
-                    st.caption("No stored memories were used for this answer yet.")
-                else:
-                    for i, s in enumerate(out["mem_snippets"], 1):
-                        st.markdown(f"**{i}.** {s}")
-
-        if colB:
-            with colB:
-                st.subheader("💬 Direct model (baseline)")
-                st.markdown('<div class="answer">', unsafe_allow_html=True)
-                st.write(st.session_state.baseline)
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.caption("This shows what you'd typically get without Orchestrix's expert routing and memory context.")
-
+        
         st.markdown('</div>', unsafe_allow_html=True)
-    else:
-        st.markdown("<div class='hint'>Ask something to see routing and answers here.</div>", unsafe_allow_html=True)
+        
+        # Answers
+        if compare_baseline and "baseline_answer" in st.session_state:
+            ans_col1, ans_col2 = st.columns(2)
+            
+            with ans_col1:
+                st.markdown("#### 🎯 Orchestrix Answer")
+                st.markdown(f'<div class="answer-box">{result["response"]}</div>', 
+                          unsafe_allow_html=True)
+                
+                with st.expander("View memories used"):
+                    if result["memories_used"] > 0:
+                        for i, snippet in enumerate(result["mem_snippets"], 1):
+                            st.write(f"{i}. {snippet}")
+                    else:
+                        st.write("No memories used yet")
+            
+            with ans_col2:
+                st.markdown("#### 💬 Baseline Answer")
+                st.markdown(f'<div class="answer-box">{st.session_state.baseline_answer}</div>', 
+                          unsafe_allow_html=True)
+        else:
+            st.markdown("#### 🎯 Orchestrix Answer")
+            st.markdown(f'<div class="answer-box">{result["response"]}</div>', 
+                      unsafe_allow_html=True)
+            
+            with st.expander("View memories used"):
+                if result["memories_used"] > 0:
+                    for i, snippet in enumerate(result["mem_snippets"], 1):
+                        st.write(f"{i}. {snippet}")
+                else:
+                    st.write("No memories used yet")
 
-# Right: metrics + agents
-with right:
-    s = tcm.metrics if hasattr(tcm, "metrics") else {"total":0,"delegations":0,"mems_used":[],"hit_rate":[],"consolidations":0}
-    tot = max(1, s.get("total",0))
-    summary = {
-        "total_queries": s.get("total",0),
-        "delegation_rate": s.get("delegations",0)/tot,
-        "avg_memories_used": float(np.mean(s.get("mems_used",[]))) if s.get("mems_used") else 0.0,
-        "avg_memory_hit_rate": float(np.mean(s.get("hit_rate",[]))) if s.get("hit_rate") else 0.0,
-        "total_consolidations": s.get("consolidations",0),
-    }
-
-    st.markdown('<div class="grid">', unsafe_allow_html=True)
-    def chip(label, value, help_text=""):
+# Right Column - Metrics
+with col_right:
+    metrics = tcm.metrics
+    total = max(1, metrics["total"])
+    
+    st.markdown("### 📊 System Metrics")
+    
+    # Metric cards
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-label">Total Queries</div>
+        <div class="metric-value">{metrics['total']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    delegation_rate = (metrics['delegations'] / total) * 100
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-label">Delegation Rate</div>
+        <div class="metric-value">{delegation_rate:.1f}%</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    avg_memories = np.mean(metrics['mems_used']) if metrics['mems_used'] else 0
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-label">Avg Memories Used</div>
+        <div class="metric-value">{avg_memories:.1f}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div class="metric-card">
+        <div class="metric-label">Consolidations</div>
+        <div class="metric-value">{metrics['consolidations']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Agent trust levels
+    st.markdown("### 🤖 Agent Trust Levels")
+    
+    for agent in ["researcher", "analyst", "engineer"]:
+        trust_values = []
+        for key, params in tcm.trust.items():
+            if key.startswith(f"{agent}:"):
+                trust = params["alpha"] / (params["alpha"] + params["beta"])
+                trust_values.append(trust)
+        
+        avg_trust = np.mean(trust_values) if trust_values else 0.5
+        
         st.markdown(f"""
-          <div class="chip" title="{help_text}">
-            <div class="label">{label}</div>
-            <div class="value">{value}</div>
-          </div>
+        <div class="agent-card">
+            <div class="agent-name">{agent.capitalize()}</div>
+            <div class="trust-bar">
+                <div class="trust-fill" style="width: {avg_trust*100}%"></div>
+            </div>
+            <small>Trust Score: {avg_trust:.3f}</small>
+        </div>
         """, unsafe_allow_html=True)
 
-    chip("Total queries", summary["total_queries"], "How many questions you asked in this session.")
-    chip("Delegation rate", f"{summary['delegation_rate']*100:.1f}%", "Share of queries routed away from the initial agent.")
-    chip("Avg memories", f"{summary['avg_memories_used']:.2f}", "Average number of snippets pulled from memory per answer.")
-    chip("Memory hit rate", f"{summary['avg_memory_hit_rate']:.2f}", "Fraction of used memories that came from the local expert vs shared pool.")
-    chip("Consolidations", summary["total_consolidations"], "How many episodic memories hardened into semantic knowledge.")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-    # Agents trust
-    st.markdown('<div class="shell soft">', unsafe_allow_html=True)
-    st.markdown('<h3 style="color: #ffffff; margin-bottom: 16px;">🤖 Agents</h3>', unsafe_allow_html=True)
-    trust = tcm.trust if hasattr(tcm, "trust") else {}
-    agents = ["researcher","analyst","engineer"]
-    colA, colB, colC = st.columns(3)
-    for col, a in zip([colA,colB,colC], agents):
-        vals = []
-        for k,v in trust.items():
-            if k.startswith(a + ":"):
-                alpha, beta = v["alpha"], v["beta"]
-                vals.append(alpha/(alpha+beta))
-        avg = sum(vals)/len(vals) if vals else 0.5
-        with col:
-            st.markdown(f"""
-            <div class="agent" title="Average trust across topics for {a.title()} (α/(α+β)).">
-              <div class="name">{a.title()}</div>
-              <div class="bar"><span style="width:{avg*100:.0f}%"></span></div>
-              <div class="hint">Trust: {avg:.3f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# How it works (short)
-with st.expander("⚙️ What makes Orchestrix different?"):
+# Footer
+with st.expander("ℹ️ How Orchestrix Works"):
     st.markdown("""
-### 🎯 **Expert Routing**
-Each agent builds **topic-specific trust** over time. We sample from these trust distributions and route to the highest draw (Thompson sampling).
-
-### 🧠 **Memory-Augmented Answers**
-Relevant snippets from prior interactions are retrieved and supplied to the model before answering.
-
-### 📈 **Learning Loop**
-A lightweight quality check updates trust (success increases α; otherwise β), so routing improves the more you use it.
-
-### 🔬 **See the Difference**
-Use **"Compare with direct model"** to see the difference vs a plain model call with no routing or memory.
+    ### Key Features
+    
+    **🎯 Expert Routing:** Agents build topic-specific trust over time through Thompson Sampling
+    
+    **🧠 Memory System:** Episodic memories consolidate into semantic knowledge
+    
+    **📈 Learning Loop:** Quality checks update trust scores (α/β parameters)
+    
+    **🔬 Comparison Mode:** See the difference vs. baseline model without orchestration
+    
+    ### Trust Model
+    - Uses Beta-Bernoulli conjugate priors
+    - Thompson Sampling for optimal exploration/exploitation
+    - Trust scores evolve based on answer quality
     """)
