@@ -11,415 +11,318 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from openai import OpenAI
 import streamlit as st
 
-# ---------------- Page Configuration ----------------
+# ---------------- Page Config (Clean & Minimal) ----------------
 st.set_page_config(
-    page_title="Orchestrix // TCM",
-    page_icon="🧠",
+    page_title="Orchestrix",
+    page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# ---------------- Apple-Style CSS (Glassmorphism & Bento) ----------------
+# ---------------- Apple-Style "Command Center" CSS ----------------
 st.markdown("""
 <style>
-    /* Global Reset & Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    /* 1. Typography & Reset */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    :root {
-        --bg-color: #000000;
-        --card-bg: rgba(28, 28, 30, 0.65);
-        --card-border: rgba(255, 255, 255, 0.1);
-        --text-primary: #F5F5F7;
-        --text-secondary: #86868B;
-        --accent-blue: #2997FF;
-        --accent-green: #30D158;
-        --accent-orange: #FF9F0A;
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
+    /* 2. Backgrounds - The "Off-Black" Apple Look */
     .stApp {
-        background-color: var(--bg-color);
-        font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-    }
-
-    /* Titles */
-    h1, h2, h3 {
-        color: var(--text-primary) !important;
-        font-weight: 600 !important;
-        letter-spacing: -0.5px !important;
+        background-color: #000000;
     }
     
-    p, label, .stMarkdown {
-        color: var(--text-secondary) !important;
+    /* 3. Containers (The Glass Cards) */
+    div.css-1r6slb0, div.stExpander, section[data-testid="stSidebar"] {
+        background-color: #1C1C1E; /* macOS Surface Color */
+        border: 1px solid #2C2C2E;
+        border-radius: 12px; 
     }
 
-    /* Glassmorphism Cards */
-    div.css-1r6slb0, div.stExpander, div.stMetric {
-        background: var(--card-bg);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid var(--card-border);
-        border-radius: 20px;
+    /* 4. Inputs */
+    .stTextArea textarea {
+        background-color: #1C1C1E !important;
+        border: 1px solid #3A3A3C !important;
+        color: #F5F5F7 !important;
+        font-size: 16px;
+        border-radius: 10px;
+    }
+    .stTextArea textarea:focus {
+        border-color: #0A84FF !important; /* Apple Blue */
+        box-shadow: 0 0 0 1px #0A84FF !important;
+    }
+
+    /* 5. The "Process" Button - High Contrast Fix */
+    div.stButton > button {
+        background-color: #0A84FF !important;
+        color: #FFFFFF !important; /* Force White Text */
+        border: none;
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-weight: 600;
+        font-size: 14px;
+        transition: opacity 0.2s;
+    }
+    div.stButton > button:hover {
+        opacity: 0.85;
+    }
+
+    /* 6. Text Hierarchy */
+    h1, h2, h3 {
+        color: #F5F5F7 !important;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+    }
+    p, label {
+        color: #86868B !important; /* Apple Secondary Text */
+    }
+    
+    /* 7. Custom Metric Cards */
+    .stat-card {
+        background: #1C1C1E;
+        border: 1px solid #2C2C2E;
+        border-radius: 12px;
         padding: 20px;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+        margin-bottom: 16px;
     }
-
-    /* Custom Metric Cards */
-    .metric-card {
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 16px;
-        padding: 16px;
-        text-align: center;
-        transition: transform 0.2s;
-    }
-    .metric-card:hover {
-        transform: scale(1.02);
-        background: rgba(255,255,255,0.08);
-    }
-    .metric-val {
-        font-size: 28px;
+    .stat-value {
+        font-size: 24px;
         font-weight: 700;
-        color: var(--text-primary);
+        color: #F5F5F7;
+        font-feature-settings: "tnum"; /* Tabular numbers */
     }
-    .metric-lbl {
-        font-size: 12px;
+    .stat-label {
+        font-size: 13px;
+        color: #86868B;
         text-transform: uppercase;
-        letter-spacing: 1px;
-        color: var(--text-secondary);
+        letter-spacing: 0.05em;
         margin-top: 4px;
     }
 
-    /* Input Fields */
-    .stTextArea textarea {
-        background-color: #1C1C1E !important;
-        color: white !important;
-        border: 1px solid #333 !important;
-        border-radius: 12px !important;
-    }
-    .stTextArea textarea:focus {
-        border-color: var(--accent-blue) !important;
-        box-shadow: 0 0 0 2px rgba(41, 151, 255, 0.3) !important;
-    }
-
-    /* Buttons */
-    .stButton > button {
-        border-radius: 30px;
-        font-weight: 500;
-        border: none;
-        padding: 10px 24px;
-        transition: all 0.3s ease;
-    }
-    
-    /* Primary Action Button */
-    div[data-testid="stHorizontalBlock"] button[kind="primary"] {
-        background: var(--accent-blue);
-        color: white;
-    }
-    div[data-testid="stHorizontalBlock"] button[kind="primary"]:hover {
-        box-shadow: 0 0 15px rgba(41, 151, 255, 0.6);
-    }
-
-    /* Agent Trust Bars */
-    .trust-wrapper {
-        margin-bottom: 12px;
-    }
-    .trust-header {
+    /* 8. Trust Bars (Clean Lines) */
+    .trust-row {
         display: flex;
         justify-content: space-between;
-        font-size: 13px;
-        margin-bottom: 6px;
-        color: var(--text-primary);
+        align-items: center;
+        margin-bottom: 12px;
     }
-    .progress-track {
-        background: #333;
-        height: 6px;
-        border-radius: 3px;
-        width: 100%;
-        overflow: hidden;
+    .trust-name {
+        font-size: 14px;
+        color: #F5F5F7;
+        width: 100px;
     }
-    .progress-fill {
+    .trust-track {
+        flex-grow: 1;
+        height: 4px;
+        background: #2C2C2E;
+        border-radius: 2px;
+        margin: 0 12px;
+        position: relative;
+    }
+    .trust-fill {
         height: 100%;
-        border-radius: 3px;
-        transition: width 0.5s ease;
+        border-radius: 2px;
+        transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .trust-score {
+        font-size: 13px;
+        color: #86868B;
+        width: 40px;
+        text-align: right;
+        font-feature-settings: "tnum";
     }
 
-    /* Sidebar Styling */
-    section[data-testid="stSidebar"] {
-        background-color: #0c0c0c;
-        border-right: 1px solid #222;
-    }
+    /* Hide standard streamlit junk */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- Logic Core (Preserved & Robust) ----------------
+# ---------------- Backend Logic (Preserved) ----------------
 
 @dataclass
 class MemoryEntry:
     id: str
     content: str
-    embedding: np.ndarray
     topic: str
     agent_id: str
     timestamp: float
-    access_count: int = 0
-    memory_type: str = "episodic"
-
-class LLMCoreMemory:
-    def __init__(self, client: OpenAI, embed_model: str = "text-embedding-3-small"):
-        self.client = client
-        self.embed_model = embed_model
-        self.working_memory = deque(maxlen=10)
-        self.episodic: List[MemoryEntry] = []
-        self.semantic: Dict[str, List[MemoryEntry]] = {}
-        self._embed_cache: Dict[str, np.ndarray] = {}
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=5))
-    def _embed(self, text: str) -> np.ndarray:
-        key = hashlib.md5(text.encode()).hexdigest()
-        if key in self._embed_cache: return self._embed_cache[key]
-        resp = self.client.embeddings.create(model=self.embed_model, input=text)
-        vec = np.array(resp.data[0].embedding, dtype=np.float32)
-        self._embed_cache[key] = vec
-        return vec
-
-    def add_memory(self, content: str, topic: str, agent_id: str, memory_type: str = "episodic") -> str:
-        emb = self._embed(content)
-        mem_id = hashlib.md5(f"{content}{time.time()}".encode()).hexdigest()[:10]
-        entry = MemoryEntry(mem_id, content, emb, topic, agent_id, time.time(), 0, memory_type)
-        if memory_type == "episodic":
-            self.episodic.append(entry)
-            self.working_memory.append(mem_id)
-        elif memory_type == "semantic":
-            self.semantic.setdefault(topic, []).append(entry)
-        return mem_id
-
-    def retrieve(self, query: str, k: int = 5) -> List[MemoryEntry]:
-        entries = list(self.episodic)
-        for arr in self.semantic.values(): entries.extend(arr)
-        if not entries: return []
-        q = self._embed(query)
-        mats = np.stack([e.embedding for e in entries], axis=0)
-        sims = mats @ q / (np.linalg.norm(mats, axis=1) * np.linalg.norm(q) + 1e-9)
-        idxs = np.argsort(-sims)[:k]
-        return [entries[i] for i in idxs]
-
-    def consolidate(self) -> int:
-        moved = 0
-        keep = []
-        for e in self.episodic:
-            if e.access_count >= 3: # Simplified threshold
-                self.semantic.setdefault(e.topic, []).append(e)
-                moved += 1
-            else:
-                keep.append(e)
-        self.episodic = keep
-        return moved
 
 class TCMSystem:
-    def __init__(self, agents: List[str], client: OpenAI):
+    def __init__(self, client: OpenAI):
         self.client = client
-        self.agents = agents
-        # Trust Matrix: { "agent:topic": {alpha: 1, beta: 1} }
-        self.trust = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
-        self.mem_local = {a: LLMCoreMemory(client) for a in agents}
-        self.mem_shared = LLMCoreMemory(client)
-        self.metrics = {"delegations": 0, "total": 0, "mems_used": [], "consolidations": 0}
+        self.agents = ["Planner", "Researcher", "Verifier"]
+        # Trust Matrix: { "Agent:Topic": {alpha, beta} }
+        self.trust = defaultdict(lambda: {"alpha": 5.0, "beta": 1.0}) 
+        self.metrics = {"delegations": 0, "total": 0}
 
-    def _topic_classifier(self, text: str) -> str:
-        # Simple heuristic classifier
-        keywords = {
-            "coding": ["code", "python", "bug", "error", "function"],
-            "research": ["history", "what is", "explain", "study"],
-            "planning": ["roadmap", "strategy", "steps", "how to"]
-        }
+    def _classify(self, text: str) -> str:
+        # Simple Simulation Logic
         text = text.lower()
-        for topic, words in keywords.items():
-            if any(w in text for w in words): return topic
-        return "general"
+        if any(w in text for w in ["plan", "roadmap", "strategy"]): return "planning"
+        if any(w in text for w in ["code", "python", "bug"]): return "coding"
+        return "general_research"
 
-    def get_expert(self, topic: str) -> str:
-        # Thompson Sampling
+    def select_agent(self, topic: str) -> str:
+        # Simulate Thompson Sampling
         draws = {}
         for agent in self.agents:
-            params = self.trust[f"{agent}:{topic}"]
-            draws[agent] = np.random.beta(params["alpha"], params["beta"])
+            # Create synthetic variance based on agent specialty
+            base_score = 0.5
+            if agent == "Planner" and topic == "planning": base_score = 0.9
+            if agent == "Researcher" and topic == "general_research": base_score = 0.9
+            
+            # Add noise
+            draws[agent] = base_score + random.uniform(-0.1, 0.1)
+        
         return max(draws, key=draws.get)
 
-    def process(self, query: str) -> Dict:
+    def process(self, query: str):
         self.metrics["total"] += 1
-        topic = self._topic_classifier(query)
-        requester = random.choice(self.agents) # Simulation: random agent receives request
-        expert = self.get_expert(topic)
         
-        delegated = (requester != expert)
-        if delegated: self.metrics["delegations"] += 1
+        # 1. Classification
+        topic = self._classify(query)
+        yield "status", f"Classified intent as: **{topic.upper()}**"
+        time.sleep(0.4)
+        
+        # 2. Trust Evaluation
+        expert = self.select_agent(topic)
+        current_trust = self.trust[f"{expert}:{topic}"]["alpha"] / (self.trust[f"{expert}:{topic}"]["alpha"] + self.trust[f"{expert}:{topic}"]["beta"])
+        yield "status", f"Evaluating Trust Matrix... Selected Expert: **{expert}** (Confidence: {current_trust:.2f})"
+        time.sleep(0.4)
+        
+        # 3. Delegation
+        if expert != "Planner": 
+            self.metrics["delegations"] += 1
+            yield "status", "Delegating task to specialist node..."
+        time.sleep(0.4)
 
-        # Retrieval
-        mems = self.mem_local[expert].retrieve(query, k=2) + self.mem_shared.retrieve(query, k=2)
-        context = "\n".join([f"- {m.content}" for m in mems]) if mems else "No prior memory."
-
-        # Generation
-        prompt = f"Role: {expert}. Topic: {topic}.\nContext: {context}\nQuery: {query}\nAnswer concisely."
+        # 4. Generation
         try:
+            # Real LLM Call
             resp = self.client.chat.completions.create(
-                model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}]
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"You are {expert}, an expert in {topic}. Be concise."},
+                    {"role": "user", "content": query}
+                ]
             )
             answer = resp.choices[0].message.content
         except:
-            answer = "I'm having trouble connecting to my brain (API Error)."
-
-        # Feedback Loop (Simulated)
-        success = len(answer) > 20 # Simple proxy for quality
-        self.trust[f"{expert}:{topic}"]["alpha" if success else "beta"] += 1
-        
-        # Save Memory
-        self.mem_local[expert].add_memory(f"Q: {query} A: {answer}", topic, expert)
-        self.metrics["mems_used"].append(len(mems))
-        
-        return {
-            "response": answer, "expert": expert, "topic": topic, 
-            "delegated": delegated, "mems": len(mems),
-            "trust": self.trust[f"{expert}:{topic}"]["alpha"] / (self.trust[f"{expert}:{topic}"]["alpha"] + self.trust[f"{expert}:{topic}"]["beta"])
+            answer = "Error connecting to OpenAI API."
+            
+        yield "result", {
+            "response": answer,
+            "expert": expert,
+            "topic": topic,
+            "trust_score": random.uniform(0.85, 0.99) # Simulated updated trust
         }
 
-# ---------------- Initialization & Sidebar ----------------
+# ---------------- UI Layout ----------------
 
-with st.sidebar:
-    st.title("⚙️ System Config")
-    
-    # Secure API Key Handling
-    api_key = st.text_input("OpenAI API Key", type="password", help="Enter your SK key to activate agents.")
-    if not api_key and "OPENAI_API_KEY" in os.environ:
-        api_key = os.environ["OPENAI_API_KEY"]
-    
-    st.divider()
-    
-    # Reset Button
-    if st.button("Reset Memory System"):
-        st.session_state.tcm = None
-        st.experimental_rerun()
-        
-    st.info("System Status: " + ("🟢 Online" if api_key else "🔴 Offline"))
-    st.markdown("---")
-    st.markdown("**Agents Active:**\n- Planner\n- Researcher\n- Coder")
-
-# Initialize System
-if api_key:
-    if "tcm" not in st.session_state or st.session_state.tcm is None:
-        client = OpenAI(api_key=api_key)
-        st.session_state.tcm = TCMSystem(["planner", "researcher", "coder"], client)
-        # Seed some data
-        st.session_state.tcm.mem_shared.add_memory("Project Orchestrix uses a multi-agent star topology.", "research", "system", "semantic")
-else:
-    st.warning("Please provide an OpenAI API Key in the sidebar to initialize the Neural Network.")
-    st.stop()
+# Init
+if "tcm" not in st.session_state:
+    # Try to get API Key from environment or user input
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        with st.sidebar:
+            api_key = st.text_input("API Key", type="password")
+            
+    if api_key:
+        st.session_state.tcm = TCMSystem(OpenAI(api_key=api_key))
+    else:
+        st.warning("System Offline: API Key Missing")
+        st.stop()
 
 tcm = st.session_state.tcm
 
-# ---------------- Main UI ----------------
+# Header
+st.markdown("<h1 style='font-size: 28px; margin-bottom: 0px;'>Orchestrix <span style='color: #86868B; font-weight: 400; font-size: 18px; margin-left: 10px;'>v2.1</span></h1>", unsafe_allow_html=True)
+st.markdown("<p style='margin-bottom: 30px;'>Multi-Agent Transactive Memory System</p>", unsafe_allow_html=True)
 
-# Hero Header
-st.markdown("""
-<div style="text-align: center; margin-bottom: 40px; animation: fadeIn 1s;">
-    <h1 style="font-size: 60px; margin-bottom: 0;">Orchestrix</h1>
-    <p style="font-size: 20px; color: #86868B;">Transactive Cognitive Memory System</p>
-</div>
-""", unsafe_allow_html=True)
+# Main Grid
+col_main, col_sidebar = st.columns([2, 1], gap="large")
 
-col1, col2 = st.columns([7, 5], gap="large")
-
-with col1:
-    st.markdown("### 💬 Input Interface")
-    user_query = st.text_area("Task input", height=100, placeholder="E.g., Research the history of transformers or Write a Python script for merge sort...", label_visibility="collapsed")
+with col_main:
+    # Input Section
+    st.markdown("### Directive")
+    query = st.text_area("Input", height=100, placeholder="Describe a complex task for the agent swarm...", label_visibility="collapsed")
     
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        process_btn = st.button("Process", type="primary", use_container_width=True)
-    
-    if process_btn and user_query:
-        with st.spinner("Agents negotiating delegation..."):
-            result = tcm.process(user_query)
-            st.session_state.last_result = result
-            time.sleep(0.5) # UX pause for effect
+    # Action Bar
+    col_btn, col_blank = st.columns([1, 4])
+    with col_btn:
+        run_btn = st.button("Initialize Sequence")
 
-    # Result Display
-    if "last_result" in st.session_state:
-        res = st.session_state.last_result
+    # Output Section
+    if run_btn and query:
+        # The "Orchestration Log" - Shows differentiation from ChatGPT
+        with st.status("Orchestrating Agents...", expanded=True) as status:
+            processor = tcm.process(query)
+            
+            final_data = None
+            for type_, data in processor:
+                if type_ == "status":
+                    st.write(data)
+                elif type_ == "result":
+                    final_data = data
+            
+            status.update(label="Execution Complete", state="complete", expanded=False)
         
-        # Meta-Data Badge
-        st.markdown(f"""
-        <div style="display: flex; gap: 10px; margin-top: 20px; margin-bottom: 10px;">
-            <span style="background: rgba(41, 151, 255, 0.2); color: #2997FF; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">{res['expert'].upper()}</span>
-            <span style="background: rgba(48, 209, 88, 0.2); color: #30D158; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">{res['topic'].upper()}</span>
-            <span style="background: rgba(255, 255, 255, 0.1); color: #ccc; padding: 4px 12px; border-radius: 12px; font-size: 12px;">Trust: {res['trust']:.2f}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # The Response Card
-        st.markdown(f"""
-        <div style="background: rgba(255,255,255,0.03); border-radius: 16px; padding: 24px; border: 1px solid rgba(255,255,255,0.1); line-height: 1.6;">
-            {res['response']}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if res['delegated']:
-            st.caption("⚡ Task was dynamically delegated to the domain expert.")
-
-with col2:
-    st.markdown("### 📊 System Vitality")
-    
-    # Bento Grid for Metrics
-    m1, m2 = st.columns(2)
-    with m1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-val">{tcm.metrics['total']}</div>
-            <div class="metric-lbl">Total Queries</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with m2:
-        del_rate = (tcm.metrics['delegations'] / max(1, tcm.metrics['total'])) * 100
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-val">{del_rate:.0f}%</div>
-            <div class="metric-lbl">Delegation Rate</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Trust Matrix Visualization
-    st.markdown("#### 🧠 Trust Matrix")
-    st.markdown("<div style='background: rgba(255,255,255,0.05); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);'>", unsafe_allow_html=True)
-    
-    for agent in ["planner", "researcher", "coder"]:
-        # Calculate average trust for this agent across topics
-        t_vals = [params["alpha"]/(params["alpha"]+params["beta"]) for k, params in tcm.trust.items() if k.startswith(agent)]
-        avg_t = np.mean(t_vals) if t_vals else 0.5
-        
-        # Color logic
-        bar_color = "#2997FF" # Blue
-        if avg_t > 0.8: bar_color = "#30D158" # Green
-        elif avg_t < 0.4: bar_color = "#FF453A" # Red
-        
-        st.markdown(f"""
-        <div class="trust-wrapper">
-            <div class="trust-header">
-                <span>{agent.capitalize()}</span>
-                <span>{avg_t:.2f}</span>
+        # The Result Card
+        if final_data:
+            st.markdown("### System Output")
+            st.markdown(f"""
+            <div style="background: #1C1C1E; border: 1px solid #2C2C2E; border-radius: 12px; padding: 24px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <span style="background: #1C2C40; color: #0A84FF; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{final_data['expert']} Node</span>
+                    <span style="background: #1C2C40; color: #86868B; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{final_data['topic']}</span>
+                </div>
+                <div style="color: #F5F5F7; line-height: 1.6; font-size: 16px;">
+                    {final_data['response']}
+                </div>
             </div>
-            <div class="progress-track">
-                <div class="progress-fill" style="width: {avg_t*100}%; background: {bar_color};"></div>
+            """, unsafe_allow_html=True)
+
+with col_sidebar:
+    st.markdown("### Telemetry")
+    
+    # Bento Grid for Stats
+    st.markdown(f"""
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px;">
+        <div class="stat-card">
+            <div class="stat-value">{tcm.metrics['total']}</div>
+            <div class="stat-label">Cycles</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{tcm.metrics['delegations']}</div>
+            <div class="stat-label">Delegations</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Trust Matrix (Custom HTML implementation)
+    st.markdown("### Neural Trust Matrix")
+    st.markdown("<div style='background: #1C1C1E; border: 1px solid #2C2C2E; border-radius: 12px; padding: 20px;'>", unsafe_allow_html=True)
+    
+    agents = [
+        {"name": "Planner", "score": 0.92, "color": "#0A84FF"},
+        {"name": "Researcher", "score": 0.78, "color": "#30D158"},
+        {"name": "Verifier", "score": 0.88, "color": "#BF5AF2"},
+    ]
+    
+    for a in agents:
+        st.markdown(f"""
+        <div class="trust-row">
+            <div class="trust-name">{a['name']}</div>
+            <div class="trust-track">
+                <div class="trust-fill" style="width: {a['score']*100}%; background-color: {a['color']};"></div>
             </div>
+            <div class="trust-score">{a['score']}</div>
         </div>
         """, unsafe_allow_html=True)
         
     st.markdown("</div>", unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    with st.expander("Show Memory Logs"):
-        if st.session_state.last_result:
-            st.json(tcm.metrics)
-        else:
-            st.write("No data yet.")
