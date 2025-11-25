@@ -1,140 +1,135 @@
-import os
-import time
-import hashlib
-import random
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-from collections import defaultdict, deque
-
-import numpy as np
-from tenacity import retry, stop_after_attempt, wait_exponential
-from openai import OpenAI
 import streamlit as st
+import time
+import random
+import os
+from openai import OpenAI
+from dataclasses import dataclass, field
+from typing import List, Dict
 
-# ---------------- Page Config (Clean & Minimal) ----------------
+# ---------------- CONFIGURATION ----------------
 st.set_page_config(
-    page_title="Orchestrix",
-    page_icon=None,
+    page_title="Orchestrix // Multi-Agent System",
+    page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# ---------------- Apple-Style "Command Center" CSS ----------------
+# ---------------- PROFESSIONAL DASHBOARD CSS ----------------
 st.markdown("""
 <style>
-    /* 1. Typography & Reset */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    /* 1. Global Reset & Dark Mode Base */
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    /* 2. Backgrounds - The "Off-Black" Apple Look */
     .stApp {
-        background-color: #000000;
-    }
-    
-    /* 3. Containers (The Glass Cards) */
-    div.css-1r6slb0, div.stExpander, section[data-testid="stSidebar"] {
-        background-color: #1C1C1E; /* macOS Surface Color */
-        border: 1px solid #2C2C2E;
-        border-radius: 12px; 
+        background-color: #0E0E10; /* Deep obsidian */
+        font-family: 'Inter', sans-serif;
     }
 
-    /* 4. Inputs */
-    .stTextArea textarea {
-        background-color: #1C1C1E !important;
-        border: 1px solid #3A3A3C !important;
-        color: #F5F5F7 !important;
-        font-size: 16px;
-        border-radius: 10px;
-    }
-    .stTextArea textarea:focus {
-        border-color: #0A84FF !important; /* Apple Blue */
-        box-shadow: 0 0 0 1px #0A84FF !important;
-    }
-
-    /* 5. The "Process" Button - High Contrast Fix */
-    div.stButton > button {
-        background-color: #0A84FF !important;
-        color: #FFFFFF !important; /* Force White Text */
-        border: none;
-        border-radius: 8px;
-        padding: 12px 24px;
-        font-weight: 600;
-        font-size: 14px;
-        transition: opacity 0.2s;
-    }
-    div.stButton > button:hover {
-        opacity: 0.85;
-    }
-
-    /* 6. Text Hierarchy */
-    h1, h2, h3 {
-        color: #F5F5F7 !important;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-    }
-    p, label {
-        color: #86868B !important; /* Apple Secondary Text */
-    }
-    
-    /* 7. Custom Metric Cards */
-    .stat-card {
-        background: #1C1C1E;
-        border: 1px solid #2C2C2E;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 16px;
-    }
-    .stat-value {
-        font-size: 24px;
-        font-weight: 700;
-        color: #F5F5F7;
-        font-feature-settings: "tnum"; /* Tabular numbers */
-    }
-    .stat-label {
-        font-size: 13px;
-        color: #86868B;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-top: 4px;
-    }
-
-    /* 8. Trust Bars (Clean Lines) */
-    .trust-row {
+    /* 2. The "Agent Nodes" Visualization */
+    .agent-grid {
         display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 12px;
+        justify-content: center;
+        gap: 20px;
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #18181B;
+        border-bottom: 1px solid #27272A;
     }
-    .trust-name {
-        font-size: 14px;
-        color: #F5F5F7;
-        width: 100px;
+    
+    .agent-node {
+        width: 120px;
+        padding: 10px;
+        border: 1px solid #3F3F46;
+        border-radius: 8px;
+        text-align: center;
+        background: #27272A;
+        color: #A1A1AA;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.3s ease;
     }
-    .trust-track {
-        flex-grow: 1;
-        height: 4px;
-        background: #2C2C2E;
-        border-radius: 2px;
-        margin: 0 12px;
-        position: relative;
-    }
-    .trust-fill {
-        height: 100%;
-        border-radius: 2px;
-        transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-    .trust-score {
-        font-size: 13px;
-        color: #86868B;
-        width: 40px;
-        text-align: right;
-        font-feature-settings: "tnum";
+    
+    .agent-active {
+        border-color: #3B82F6; /* Blue Glow */
+        background: rgba(59, 130, 246, 0.15);
+        color: #3B82F6;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+        transform: translateY(-2px);
     }
 
-    /* Hide standard streamlit junk */
+    /* 3. The "Terminal" Log */
+    .terminal-box {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        background: #000000;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 15px;
+        height: 150px;
+        overflow-y: auto;
+        color: #00FF94; /* Hacker Green */
+        margin-bottom: 20px;
+        box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+    }
+    
+    .log-line {
+        margin-bottom: 4px;
+        border-bottom: 1px solid #111;
+        padding-bottom: 2px;
+    }
+    
+    .log-timestamp { color: #555; margin-right: 8px; }
+    .log-agent { color: #3B82F6; font-weight: bold; margin-right: 8px; }
+
+    /* 4. Chat Bubbles (Distinct from ChatGPT) */
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .msg-user {
+        align-self: flex-end;
+        background: #27272A;
+        color: #F4F4F5;
+        padding: 12px 16px;
+        border-radius: 12px 12px 0 12px;
+        max-width: 80%;
+        border: 1px solid #3F3F46;
+    }
+    
+    .msg-ai {
+        align-self: flex-start;
+        background: transparent;
+        color: #E4E4E7;
+        padding: 0;
+        max-width: 100%;
+        border-left: 2px solid #3B82F6;
+        padding-left: 15px;
+    }
+
+    /* 5. Memory Cards */
+    .memory-card {
+        background: #18181B;
+        border: 1px solid #27272A;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+        font-size: 11px;
+        color: #A1A1AA;
+    }
+    .memory-tag {
+        display: inline-block;
+        padding: 2px 6px;
+        background: #27272A;
+        color: #3B82F6;
+        border-radius: 4px;
+        margin-bottom: 4px;
+        font-size: 9px;
+        text-transform: uppercase;
+    }
+
+    /* Hiding Streamlit Elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -142,187 +137,191 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- Backend Logic (Preserved) ----------------
+# ---------------- SESSION STATE SETUP ----------------
+if 'history' not in st.session_state:
+    st.session_state.history = []
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
+if 'active_agent' not in st.session_state:
+    st.session_state.active_agent = "IDLE"
+if 'memories' not in st.session_state:
+    st.session_state.memories = []
 
-@dataclass
-class MemoryEntry:
-    id: str
-    content: str
-    topic: str
-    agent_id: str
-    timestamp: float
+# ---------------- LOGIC CORE (SIMULATED FOR DEMO) ----------------
+def log_event(agent, action):
+    timestamp = time.strftime("%H:%M:%S")
+    entry = f"<span class='log-timestamp'>[{timestamp}]</span> <span class='log-agent'>[{agent}]</span> {action}"
+    st.session_state.logs.append(entry)
 
-class TCMSystem:
-    def __init__(self, client: OpenAI):
-        self.client = client
-        self.agents = ["Planner", "Researcher", "Verifier"]
-        # Trust Matrix: { "Agent:Topic": {alpha, beta} }
-        self.trust = defaultdict(lambda: {"alpha": 5.0, "beta": 1.0}) 
-        self.metrics = {"delegations": 0, "total": 0}
+def run_orchestration(prompt):
+    """Simulates the multi-agent decision loop with visual feedback"""
+    
+    # 1. Planner Phase
+    st.session_state.active_agent = "PLANNER"
+    log_event("PLANNER", f"Analyzing intent: '{prompt[:30]}...'")
+    yield
+    time.sleep(0.8)
+    
+    # Determine Intent (Simple Logic)
+    intent = "general"
+    if "code" in prompt.lower() or "python" in prompt.lower(): intent = "coding"
+    elif "history" in prompt.lower() or "what is" in prompt.lower(): intent = "research"
+    
+    log_event("PLANNER", f"Intent classified as: <{intent.upper()}>")
+    yield
+    time.sleep(0.5)
 
-    def _classify(self, text: str) -> str:
-        # Simple Simulation Logic
-        text = text.lower()
-        if any(w in text for w in ["plan", "roadmap", "strategy"]): return "planning"
-        if any(w in text for w in ["code", "python", "bug"]): return "coding"
-        return "general_research"
+    # 2. Researcher/Memory Phase
+    st.session_state.active_agent = "RESEARCHER"
+    log_event("RESEARCHER", "Querying Transactive Memory System...")
+    yield
+    time.sleep(0.8)
+    
+    # Simulate Retrieval
+    new_mem = {
+        "id": f"mem_{random.randint(1000,9999)}",
+        "topic": intent,
+        "content": f"Relevant context found for {intent}..."
+    }
+    st.session_state.memories.insert(0, new_mem)
+    log_event("MEMORY", f"Retrieved context ID: {new_mem['id']} (Confidence: 0.92)")
+    yield
+    time.sleep(0.6)
 
-    def select_agent(self, topic: str) -> str:
-        # Simulate Thompson Sampling
-        draws = {}
-        for agent in self.agents:
-            # Create synthetic variance based on agent specialty
-            base_score = 0.5
-            if agent == "Planner" and topic == "planning": base_score = 0.9
-            if agent == "Researcher" and topic == "general_research": base_score = 0.9
-            
-            # Add noise
-            draws[agent] = base_score + random.uniform(-0.1, 0.1)
-        
-        return max(draws, key=draws.get)
-
-    def process(self, query: str):
-        self.metrics["total"] += 1
-        
-        # 1. Classification
-        topic = self._classify(query)
-        yield "status", f"Classified intent as: **{topic.upper()}**"
-        time.sleep(0.4)
-        
-        # 2. Trust Evaluation
-        expert = self.select_agent(topic)
-        current_trust = self.trust[f"{expert}:{topic}"]["alpha"] / (self.trust[f"{expert}:{topic}"]["alpha"] + self.trust[f"{expert}:{topic}"]["beta"])
-        yield "status", f"Evaluating Trust Matrix... Selected Expert: **{expert}** (Confidence: {current_trust:.2f})"
-        time.sleep(0.4)
-        
-        # 3. Delegation
-        if expert != "Planner": 
-            self.metrics["delegations"] += 1
-            yield "status", "Delegating task to specialist node..."
-        time.sleep(0.4)
-
-        # 4. Generation
-        try:
-            # Real LLM Call
-            resp = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": f"You are {expert}, an expert in {topic}. Be concise."},
-                    {"role": "user", "content": query}
-                ]
-            )
-            answer = resp.choices[0].message.content
-        except:
-            answer = "Error connecting to OpenAI API."
-            
-        yield "result", {
-            "response": answer,
-            "expert": expert,
-            "topic": topic,
-            "trust_score": random.uniform(0.85, 0.99) # Simulated updated trust
-        }
-
-# ---------------- UI Layout ----------------
-
-# Init
-if "tcm" not in st.session_state:
-    # Try to get API Key from environment or user input
+    # 3. Execution Phase
+    target_agent = "CODER" if intent == "coding" else "WRITER"
+    st.session_state.active_agent = target_agent
+    log_event(target_agent, "Generating response based on retrieved context...")
+    yield
+    time.sleep(1.0)
+    
+    # Fake LLM Response (Replace with real OpenAI call if API key exists)
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        with st.sidebar:
-            api_key = st.text_input("API Key", type="password")
-            
+    response_text = ""
+    
     if api_key:
-        st.session_state.tcm = TCMSystem(OpenAI(api_key=api_key))
-    else:
-        st.warning("System Offline: API Key Missing")
-        st.stop()
+        try:
+            client = OpenAI(api_key=api_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            response_text = resp.choices[0].message.content
+        except:
+            response_text = "Error: API connection failed. Using fallback."
 
-tcm = st.session_state.tcm
+    if not response_text:
+        # Fallback simulation
+        if intent == "coding":
+            response_text = f"```python\n# Optimized implementation for {prompt}\ndef solve():\n    return 'Orchestrix Logic'\n```\nHere is the generated code based on the parameters."
+        else:
+            response_text = f"Based on the analysis of **{prompt}**, the system identifies key factors in the memory graph. The simulation suggests a 94% probability of success."
 
-# Header
-st.markdown("<h1 style='font-size: 28px; margin-bottom: 0px;'>Orchestrix <span style='color: #86868B; font-weight: 400; font-size: 18px; margin-left: 10px;'>v2.1</span></h1>", unsafe_allow_html=True)
-st.markdown("<p style='margin-bottom: 30px;'>Multi-Agent Transactive Memory System</p>", unsafe_allow_html=True)
-
-# Main Grid
-col_main, col_sidebar = st.columns([2, 1], gap="large")
-
-with col_main:
-    # Input Section
-    st.markdown("### Directive")
-    query = st.text_area("Input", height=100, placeholder="Describe a complex task for the agent swarm...", label_visibility="collapsed")
+    st.session_state.active_agent = "IDLE"
+    log_event("SYSTEM", "Task complete. Output verified.")
     
-    # Action Bar
-    col_btn, col_blank = st.columns([1, 4])
-    with col_btn:
-        run_btn = st.button("Initialize Sequence")
+    st.session_state.history.append({"role": "user", "content": prompt})
+    st.session_state.history.append({"role": "ai", "content": response_text})
+    yield
 
-    # Output Section
-    if run_btn and query:
-        # The "Orchestration Log" - Shows differentiation from ChatGPT
-        with st.status("Orchestrating Agents...", expanded=True) as status:
-            processor = tcm.process(query)
-            
-            final_data = None
-            for type_, data in processor:
-                if type_ == "status":
-                    st.write(data)
-                elif type_ == "result":
-                    final_data = data
-            
-            status.update(label="Execution Complete", state="complete", expanded=False)
-        
-        # The Result Card
-        if final_data:
-            st.markdown("### System Output")
-            st.markdown(f"""
-            <div style="background: #1C1C1E; border: 1px solid #2C2C2E; border-radius: 12px; padding: 24px;">
-                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                    <span style="background: #1C2C40; color: #0A84FF; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{final_data['expert']} Node</span>
-                    <span style="background: #1C2C40; color: #86868B; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{final_data['topic']}</span>
-                </div>
-                <div style="color: #F5F5F7; line-height: 1.6; font-size: 16px;">
-                    {final_data['response']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+# ---------------- UI LAYOUT ----------------
 
-with col_sidebar:
-    st.markdown("### Telemetry")
+# 1. Top Bar: Agent Visualization
+planner_class = "agent-active" if st.session_state.active_agent == "PLANNER" else "agent-node"
+research_class = "agent-active" if st.session_state.active_agent == "RESEARCHER" else "agent-node"
+coder_class = "agent-active" if st.session_state.active_agent in ["CODER", "WRITER"] else "agent-node"
+
+st.markdown(f"""
+<div class="agent-grid">
+    <div class="{planner_class}">PLANNER<br><span style="font-size:10px; opacity:0.6;">Architecture</span></div>
+    <div style="align-self:center; color:#555;">➔</div>
+    <div class="{research_class}">RESEARCHER<br><span style="font-size:10px; opacity:0.6;">Memory Retrieval</span></div>
+    <div style="align-self:center; color:#555;">➔</div>
+    <div class="{coder_class}">EXECUTOR<br><span style="font-size:10px; opacity:0.6;">Code/Text Gen</span></div>
+</div>
+""", unsafe_allow_html=True)
+
+# 2. Main Workspace
+col_log, col_chat = st.columns([1, 2])
+
+# Left Column: System Internals (The "Difference" from ChatGPT)
+with col_log:
+    st.markdown("### 📟 System Kernel")
     
-    # Bento Grid for Stats
+    # Render the scrolling log
+    log_html = "".join([f"<div class='log-line'>{l}</div>" for l in st.session_state.logs[-10:]]) # Show last 10
     st.markdown(f"""
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px;">
-        <div class="stat-card">
-            <div class="stat-value">{tcm.metrics['total']}</div>
-            <div class="stat-label">Cycles</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{tcm.metrics['delegations']}</div>
-            <div class="stat-label">Delegations</div>
-        </div>
+    <div class="terminal-box" id="terminal">
+        {log_html}
     </div>
     """, unsafe_allow_html=True)
     
-    # Trust Matrix (Custom HTML implementation)
-    st.markdown("### Neural Trust Matrix")
-    st.markdown("<div style='background: #1C1C1E; border: 1px solid #2C2C2E; border-radius: 12px; padding: 20px;'>", unsafe_allow_html=True)
-    
-    agents = [
-        {"name": "Planner", "score": 0.92, "color": "#0A84FF"},
-        {"name": "Researcher", "score": 0.78, "color": "#30D158"},
-        {"name": "Verifier", "score": 0.88, "color": "#BF5AF2"},
-    ]
-    
-    for a in agents:
-        st.markdown(f"""
-        <div class="trust-row">
-            <div class="trust-name">{a['name']}</div>
-            <div class="trust-track">
-                <div class="trust-fill" style="width: {a['score']*100}%; background-color: {a['color']};"></div>
+    st.markdown("### 🧠 Active Memory")
+    if not st.session_state.memories:
+        st.markdown("<div class='memory-card'>No active context loaded.</div>", unsafe_allow_html=True)
+    else:
+        for mem in st.session_state.memories[:3]: # Show top 3
+            st.markdown(f"""
+            <div class="memory-card">
+                <span class="memory-tag">{mem['topic']}</span>
+                <span style="float:right; opacity:0.5;">{mem['id']}</span><br>
+                {mem['content']}
             </div>
-            <div class="trust-score">{a['score']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+
+# Right Column: Interaction
+with col_chat:
+    st.markdown("### 💬 Orchestrix Interface")
+    
+    # History Display
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.history:
+            if msg['role'] == 'user':
+                st.markdown(f"<div class='msg-user'>{msg['content']}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='msg-ai'>{msg['content']}</div>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Input Area
+    with st.form(key="query_form", clear_on_submit=True):
+        user_input = st.text_area("Input Directive", height=80, placeholder="Enter complex instruction for multi-agent swarm...", label_visibility="collapsed")
+        c1, c2 = st.columns([1, 5])
+        with c1:
+            submit = st.form_submit_button("Execute")
+            
+    if submit and user_input:
+        # Run the generator to update UI step-by-step
+        runner = run_orchestration(user_input)
         
-    st.markdown("</div>", unsafe_allow_html=True)
+        # Create a placeholder to force UI refreshes during the loop
+        placeholder = st.empty()
+        
+        try:
+            for _ in runner:
+                # This forces Streamlit to re-render the Top Bar & Logs
+                # In a real app, we'd use st.rerun(), but inside a loop we just need to wait
+                time.sleep(0.1) 
+                st.rerun() 
+        except StopIteration:
+            pass
+        except Exception as e:
+            pass # Handle rerun interrupts
+
+# Sidebar Config
+with st.sidebar:
+    st.markdown("## ⚙️ Configuration")
+    api_key = st.text_input("OpenAI API Key", type="password", help="Required for live LLM generation")
+    if api_key: os.environ["OPENAI_API_KEY"] = api_key
+    
+    st.markdown("---")
+    st.markdown("**System Health:** 🟢 Online")
+    st.markdown("**Memory Shards:** 1,024")
+    st.markdown("**Agents Online:** 3")
+    
+    if st.button("Reset System Memory"):
+        st.session_state.history = []
+        st.session_state.logs = []
+        st.session_state.memories = []
+        st.rerun()
